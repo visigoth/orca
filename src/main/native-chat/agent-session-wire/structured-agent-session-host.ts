@@ -3,11 +3,9 @@
 
 import type { AgentSessionExecutionLocation } from '../../../shared/agent-session-record'
 import type {
-  AgentSessionAttachResult,
   AgentSessionHistoryRequest,
   AgentSessionHistoryResult,
   AgentSessionHandoffStatus,
-  AgentSessionMutationResult,
   AgentSessionOptionsResult,
   AgentSessionWireRefusal
 } from '../../../shared/agent-session-wire'
@@ -28,15 +26,18 @@ import { StructuredAgentSessionHostRuntimeState } from './structured-agent-sessi
 import { attachStructuredAgentSession } from './structured-agent-session-attach-orchestration'
 import {
   createStructuredAgentSessionHolds,
-  evictHeldStructuredAgentSession,
-  type StructuredAgentSessionLifetimeContext
+  createStructuredAgentSessionLifetimeContext,
+  evictHeldStructuredAgentSession
 } from './structured-agent-session-host-lifetime'
 import type {
   StructuredAgentSessionHolds,
   StructuredAgentSessionHoldOptions
 } from './structured-agent-session-holds'
 import { resumeHeldStructuredAgentSession } from './structured-agent-session-hold-resume'
-import type { StructuredAgentSessionAttachContext } from './structured-agent-session-attach-context'
+import {
+  createStructuredAgentSessionAttachContext,
+  type StructuredAgentSessionAttachContext
+} from './structured-agent-session-attach-context'
 import { listStructuredAgentSessionTabs } from './structured-agent-session-host-tabs'
 import {
   cancelStructuredAgentSessionTurn,
@@ -44,6 +45,7 @@ import {
   respondToStructuredAgentSessionPrompt,
   sendStructuredAgentSessionTurn,
   setStructuredAgentSessionOption,
+  createStructuredAgentSessionMutationContext,
   type StructuredAgentSessionMutationContext
 } from './structured-agent-session-host-mutations'
 import { StructuredAgentSessionReadableRestorer } from './structured-agent-session-readable-restorer'
@@ -52,16 +54,23 @@ import type {
   StructuredAgentSessionHostDeps,
   StructuredAgentSessionHostSession
 } from './structured-agent-session-host-types'
-import { readStructuredAgentSessionHistoryResult } from './structured-agent-session-history-result'
 import {
-  admitOrReplayCreateIntent,
-  releaseCreateIntentAdmission,
-  requireStructuredSession,
-  settleCreateIntentRefusal
+  createStructuredAgentSessionCreateIntentContext,
+  createStructuredAgentSessionCreateIntentSurface,
+  requireStructuredSession
 } from './structured-agent-session-host-create-intent'
 import type { AgentSessionAttachParams } from './structured-agent-session-attach'
+import {
+  executionLocationForSession as readExecutionLocationForSession,
+  createStructuredAgentSessionHostSurfaceContext,
+  handoffStatus as readHandoffStatus,
+  history as readHistory,
+  subscribe as openSubscription,
+  type StructuredAgentSessionHostSurfaceContext
+} from './structured-agent-session-host-surfaces'
+import { retryPendingStructuredAgentSessionSettlement } from './structured-agent-session-settlement-retry'
+import { StructuredAgentSessionEventRecovery } from './structured-agent-session-event-recovery'
 export type { StructuredAgentSessionHostDeps } from './structured-agent-session-host-types'
-
 export class StructuredAgentSessionHost {
   private readonly sessions = new Map<string, StructuredAgentSessionHostSession>()
   private readonly subscribers = new AgentSessionSubscribers()
@@ -73,6 +82,16 @@ export class StructuredAgentSessionHost {
   private readonly restartRestore = new StructuredAgentSessionRestartRestoreGate()
   private readonly holds: StructuredAgentSessionHolds
   private readonly activeCreateIntents = new Set<string>()
+  private readonly eventRecovery: StructuredAgentSessionEventRecovery
+  private readonly createIntentSurface = createStructuredAgentSessionCreateIntentSurface(() =>
+    createStructuredAgentSessionCreateIntentContext(
+      this.deps,
+      this.sessions,
+      this.activeCreateIntents,
+      this.now,
+      (caller, params) => this.attach(caller, params)
+    )
+  )
 
   constructor(readonly deps: StructuredAgentSessionHostDeps) {
     this.runtimeState = new StructuredAgentSessionHostRuntimeState(
@@ -83,7 +102,8 @@ export class StructuredAgentSessionHost {
           ? this.serialize(record.sessionId, () =>
               this.handoffs.recoverDeadTuiOwner(record.sessionId, record.lease.runtimeFence, probe)
             )
-          : Promise.resolve()
+          : Promise.resolve(),
+      (sessionId, error) => this.eventRecovery.recoverAfterSinkFailure(sessionId, error)
     )
     this.reconcileLeases = createRestartReconciler({
       store: deps.store,
@@ -114,15 +134,29 @@ export class StructuredAgentSessionHost {
       onReadable: (sessionId, restored) => this.sessions.set(sessionId, restored),
       restoreHandoff: (sessionId) => this.handoffs.restore(sessionId)
     })
+    this.eventRecovery = new StructuredAgentSessionEventRecovery({
+      deps,
+      store: deps.store,
+      sessions: this.sessions,
+      flushLifecycle: (sessionId) => this.runtimeState.lifecycleBarrier(sessionId),
+      publishFence: (sessionId, session) =>
+        this.subscribers.snapshot(sessionId, session.journal, session.fence),
+      hasResumeCapableHolder: (sessionId) => this.holds.hasResumeCapableHolder(sessionId),
+      serialize: (sessionId, task) => this.serialize(sessionId, task),
+      now: () => this.now(),
+      attachContext: () => this.attachContext(),
+      onBarrierError: (sessionId, error) => deps.onEventSinkError?.({ sessionId, error })
+    })
     this.runtimeState.startLeaseRenewal()
   }
 
   private now = (): number => this.deps.now?.() ?? Date.now()
 
   hasSession = (sessionId: string): boolean => this.sessions.has(sessionId)
+  isHeld = (sessionId: string): boolean => this.holds.isHeld(sessionId)
 
   executionLocationForSession = (sessionId: string): AgentSessionExecutionLocation | null =>
-    this.deps.store.getRecord(sessionId)?.location ?? null
+    readExecutionLocationForSession(this.surfaceContext(), sessionId)
 
   /** A surface bound to this session and wants it live. The FIRST hold on a session with no
    *  provider child is what resumes one; a retained hold (a subscription) only keeps it. */
@@ -134,8 +168,6 @@ export class StructuredAgentSessionHost {
 
   /** That surface is gone. The child outlives it by the release grace, and by any running turn. */
   release = (sessionId: string, holderId: string): void => this.holds.release(sessionId, holderId)
-
-  isHeld = (sessionId: string): boolean => this.holds.isHeld(sessionId)
 
   private async resumeForHold(sessionId: string): Promise<void> {
     const unreconciled = await this.reconcileLeases(sessionId)
@@ -151,29 +183,34 @@ export class StructuredAgentSessionHost {
     })
   }
 
-  private lifetimeContext(): StructuredAgentSessionLifetimeContext {
-    return {
-      deps: this.deps,
-      runtimeState: this.runtimeState,
-      sessions: this.sessions,
-      now: () => this.now()
-    }
-  }
+  handleAdapterEvent = (event: Parameters<StructuredAgentSessionEventRecovery['handle']>[0]) =>
+    this.eventRecovery.handle(event)
+
+  private lifetimeContext = () =>
+    createStructuredAgentSessionLifetimeContext(this.deps, this.runtimeState, this.sessions, () =>
+      this.now()
+    )
 
   /** The host's half of attaching, named so it cannot grow dependencies unnoticed. */
-  private attachContext(): StructuredAgentSessionAttachContext {
-    return {
-      deps: this.deps,
-      runtimeState: this.runtimeState,
-      sessions: this.sessions,
-      subscribers: this.subscribers,
-      tasks: this.tasks,
-      reconcileLeases: (sessionId) => this.reconcileLeases(sessionId),
-      serialize: (sessionId, task) => this.serialize(sessionId, task),
-      now: () => this.now()
-    }
-  }
-
+  private attachContext = (): StructuredAgentSessionAttachContext =>
+    createStructuredAgentSessionAttachContext(
+      this.deps,
+      this.runtimeState,
+      this.sessions,
+      this.subscribers,
+      this.tasks,
+      (sessionId) => this.reconcileLeases(sessionId),
+      (sessionId, params) =>
+        retryPendingStructuredAgentSessionSettlement({
+          deps: this.deps,
+          sessions: this.sessions,
+          sessionId,
+          params,
+          now: () => this.now()
+        }),
+      (sessionId, task) => this.serialize(sessionId, task),
+      () => this.now()
+    )
   /** Releases a session's resources without ending the conversation: the record and journal stay
    *  on disk, so the same session can be attached again. */
   close(sessionId: string): Promise<void> {
@@ -189,17 +226,13 @@ export class StructuredAgentSessionHost {
   supportsCreate = (location: AgentSessionExecutionLocation, agent: string): boolean =>
     providerSupport.adapterSupportsCreate(this.deps.adapter, location, agent)
 
-  listSessionTabs() {
-    return listStructuredAgentSessionTabs(this.sessions)
-  }
+  listSessionTabs = () => listStructuredAgentSessionTabs(this.sessions)
 
-  getPersistedVisibleSessionTabIndex(): { present: boolean; sessionIds: string[] } {
-    return this.deps.store.getVisibleSessionTabIndex()
-  }
+  getPersistedVisibleSessionTabIndex = (): { present: boolean; sessionIds: string[] } =>
+    this.deps.store.getVisibleSessionTabIndex()
 
-  setSessionTabVisibility(sessionId: string, visible: boolean): Promise<void> {
-    return this.deps.store.setSessionTabVisibility(sessionId, visible)
-  }
+  setSessionTabVisibility = (sessionId: string, visible: boolean) =>
+    this.deps.store.setSessionTabVisibility(sessionId, visible)
 
   reconcileRestartLeases = async (): Promise<void> => {
     const refusal = await this.reconcileLeases('startup')
@@ -222,39 +255,12 @@ export class StructuredAgentSessionHost {
     })
   }
 
-  attach(
-    caller: StructuredAgentSessionCaller,
-    params: AgentSessionAttachParams
-  ): Promise<AgentSessionMutationResult<AgentSessionAttachResult>> {
-    return attachStructuredAgentSession(this.attachContext(), caller.callerKey, params)
-  }
+  attach = (caller: StructuredAgentSessionCaller, params: AgentSessionAttachParams) =>
+    attachStructuredAgentSession(this.attachContext(), caller.callerKey, params)
 
-  admitOrReplayCreateIntent = (
-    caller: StructuredAgentSessionCaller,
-    envelope: Parameters<typeof admitOrReplayCreateIntent>[2]
-  ) => admitOrReplayCreateIntent(this.createIntentContext(), caller, envelope)
-
-  settleCreateIntentRefusal = (
-    caller: StructuredAgentSessionCaller,
-    envelope: Parameters<typeof settleCreateIntentRefusal>[2],
-    refusal: Parameters<typeof settleCreateIntentRefusal>[3]
-  ) => settleCreateIntentRefusal(this.createIntentContext(), caller, envelope, refusal)
-
-  releaseCreateIntentAdmission = (
-    caller: StructuredAgentSessionCaller,
-    envelope: Parameters<typeof releaseCreateIntentAdmission>[2]
-  ): void => releaseCreateIntentAdmission(this.createIntentContext(), caller, envelope)
-
-  private createIntentContext() {
-    return {
-      deps: this.deps,
-      sessions: this.sessions,
-      activeCreateIntents: this.activeCreateIntents,
-      now: this.now,
-      attach: (caller: StructuredAgentSessionCaller, params: AgentSessionAttachParams) =>
-        this.attach(caller, params)
-    }
-  }
+  admitOrReplayCreateIntent = this.createIntentSurface.admitOrReplayCreateIntent
+  settleCreateIntentRefusal = this.createIntentSurface.settleCreateIntentRefusal
+  releaseCreateIntentAdmission = this.createIntentSurface.releaseCreateIntentAdmission
 
   flushStreamedEvents = (sessionId: string): Promise<void> =>
     this.runtimeState.flushEventSink(sessionId)
@@ -268,72 +274,62 @@ export class StructuredAgentSessionHost {
   }
 
   private mutationContext(): StructuredAgentSessionMutationContext {
-    return {
+    return createStructuredAgentSessionMutationContext({
       deps: this.deps,
       sessions: this.sessions,
       publish: (sessionId, journal) => this.subscribers.publish(sessionId, journal),
       requireSession: (sessionId) => this.requireSession(sessionId),
       serialize: (sessionId, task) => this.serialize(sessionId, task),
       now: () => this.now()
-    }
+    })
   }
 
   send = (
     caller: StructuredAgentSessionCaller,
     params: Parameters<typeof sendStructuredAgentSessionTurn>[2]
-  ): ReturnType<typeof sendStructuredAgentSessionTurn> =>
-    sendStructuredAgentSessionTurn(this.mutationContext(), caller, params)
+  ) => sendStructuredAgentSessionTurn(this.mutationContext(), caller, params)
 
   cancel = (
     caller: StructuredAgentSessionCaller,
     params: Parameters<typeof cancelStructuredAgentSessionTurn>[2]
-  ): ReturnType<typeof cancelStructuredAgentSessionTurn> =>
-    cancelStructuredAgentSessionTurn(this.mutationContext(), caller, params)
+  ) => cancelStructuredAgentSessionTurn(this.mutationContext(), caller, params)
 
   respondToPrompt = (
     caller: StructuredAgentSessionCaller,
     params: Parameters<typeof respondToStructuredAgentSessionPrompt>[2]
-  ): ReturnType<typeof respondToStructuredAgentSessionPrompt> =>
-    respondToStructuredAgentSessionPrompt(this.mutationContext(), caller, params)
+  ) => respondToStructuredAgentSessionPrompt(this.mutationContext(), caller, params)
 
   setOption = (
     caller: StructuredAgentSessionCaller,
     params: Parameters<typeof setStructuredAgentSessionOption>[2]
-  ): ReturnType<typeof setStructuredAgentSessionOption> =>
-    setStructuredAgentSessionOption(this.mutationContext(), caller, params)
+  ) => setStructuredAgentSessionOption(this.mutationContext(), caller, params)
 
   readOptions = (sessionId: string): Promise<AgentSessionOptionsResult> =>
     readStructuredAgentSessionOptions(this.mutationContext(), sessionId)
 
-  async handoffStatus(sessionId: string): Promise<AgentSessionHandoffStatus> {
-    this.requireSession(sessionId)
-    return this.serialize(sessionId, () =>
-      refreshRecoverableStructuredHandoffStatus(this.handoffs, this.deps.store, sessionId)
-    )
-  }
+  handoffStatus = (sessionId: string): Promise<AgentSessionHandoffStatus> =>
+    readHandoffStatus(this.surfaceContext(), sessionId)
 
-  history(request: AgentSessionHistoryRequest): AgentSessionHistoryResult {
-    return readStructuredAgentSessionHistoryResult({
-      journal: this.requireSession(request.sessionId).journal,
-      record: this.deps.store.getRecord(request.sessionId),
-      request
-    })
-  }
+  history = (request: AgentSessionHistoryRequest): AgentSessionHistoryResult =>
+    readHistory(this.surfaceContext(), request)
 
-  subscribe(input: AgentSessionSubscribeInput): () => void {
-    const session = this.requireSession(input.sessionId)
-    const fence = this.deps.store.getRecord(input.sessionId)?.lease.runtimeFence ?? 0
-    return this.subscribers.open({
-      ...input,
-      journal: session.journal,
-      fence,
-      handoff: this.handoffs.status(input.sessionId)
-    })
-  }
-
+  subscribe = (input: AgentSessionSubscribeInput): (() => void) =>
+    openSubscription(this.surfaceContext(), input)
   unsubscribe = (sessionId: string, id: string): void => this.subscribers.close(sessionId, id)
 
   private requireSession(sessionId: string): StructuredAgentSessionHostSession {
     return requireStructuredSession(this.sessions, sessionId)
   }
+
+  private surfaceContext = (): StructuredAgentSessionHostSurfaceContext =>
+    createStructuredAgentSessionHostSurfaceContext({
+      deps: this.deps,
+      sessions: this.sessions,
+      handoffs: this.handoffs,
+      subscribers: this.subscribers,
+      tasks: this.tasks,
+      serialize: this.serialize,
+      requireSession: this.requireSession,
+      now: this.now
+    })
 }

@@ -38,6 +38,17 @@ export type StructuredAgentSessionMutationContext = {
   now: () => number
 }
 
+export function createStructuredAgentSessionMutationContext(input: {
+  deps: StructuredAgentSessionHostDeps
+  sessions: Map<string, StructuredAgentSessionHostSession>
+  publish: StructuredAgentSessionMutationContext['publish']
+  requireSession: StructuredAgentSessionMutationContext['requireSession']
+  serialize: StructuredAgentSessionMutationContext['serialize']
+  now: () => number
+}): StructuredAgentSessionMutationContext {
+  return input
+}
+
 function mutate<TValue>(
   context: StructuredAgentSessionMutationContext,
   caller: StructuredAgentSessionCaller,

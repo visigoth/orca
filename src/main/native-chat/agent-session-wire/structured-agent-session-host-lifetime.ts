@@ -27,6 +27,15 @@ export type StructuredAgentSessionLifetimeContext = {
   now: () => number
 }
 
+export function createStructuredAgentSessionLifetimeContext(
+  deps: StructuredAgentSessionHostDeps,
+  runtimeState: StructuredAgentSessionHostRuntimeState,
+  sessions: Map<string, StructuredAgentSessionHostSession>,
+  now: () => number
+): StructuredAgentSessionLifetimeContext {
+  return { deps, runtimeState, sessions, now }
+}
+
 function hasProviderChild(
   context: StructuredAgentSessionLifetimeContext,
   sessionId: string

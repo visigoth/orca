@@ -2,35 +2,20 @@ import type {
   AgentJournalMessageItem,
   AgentSessionJournalIdentity
 } from '../../shared/agent-session-journal-types'
-import {
-  AgentSessionPreSpawnError,
-  type AgentSessionAcquisition,
-  type AgentSessionDispatchOutcome,
-  type StructuredAgentSessionAcquireInput,
-  type StructuredAgentSessionAdapter,
-  type StructuredAgentSessionSetOptionInput
+import type {
+  AgentSessionAcquisition,
+  AgentSessionDispatchOutcome,
+  StructuredAgentSessionAcquireInput,
+  StructuredAgentSessionAdapter,
+  StructuredAgentSessionSetOptionInput
 } from '../native-chat/agent-session-wire/structured-agent-session-adapter'
-import {
-  closeFailedCodexAcquisition,
-  stopSupersededCodexAcquisition
-} from './codex-structured-acquisition-lifecycle'
-import { createCodexJournalTranslator } from './codex-structured-journal-translation'
-import { openCodexAppServerConnection } from './codex-app-server-connection'
-import { codexProcessIdentity, codexProviderHandleLink } from './codex-structured-owner-identity'
-import { buildCodexStructuredChildEnvironment } from './codex-structured-child-environment'
-import { openCodexThread } from './codex-structured-thread-open'
+import type { CodexJournalTranslationAdmission } from './codex-structured-journal-translation'
 import { supportsCodexStructuredLocation } from './codex-structured-location-support'
 import {
   closeAllCodexSessions,
   closeCodexPublishedSession,
-  closeCodexSession,
-  handleCodexSessionExit
+  closeCodexSession
 } from './codex-structured-session-close'
-import {
-  reportedCodexThreadOptions,
-  restoredCodexSessionOptions,
-  validateCodexStructuredSessionInitialOptions
-} from './codex-structured-session-options'
 import {
   CodexAcquisitionRegistry,
   type CodexAcquisitionAttempt,
@@ -44,6 +29,7 @@ import {
   deliverCodexUnhandledFrame
 } from './codex-structured-provider-events'
 import { CodexStructuredTurnCancellation } from './codex-structured-turn-cancellation'
+import { createCodexStructuredNotificationRetry } from './codex-structured-notification-retry'
 import {
   answerCodexSessionPrompt,
   bindCodexPromptItemId,
@@ -53,6 +39,7 @@ import {
   readCodexSessionOptions,
   setCodexSessionOption
 } from './codex-structured-session-adapter-operations'
+import { acquireCodexStructuredSession } from './codex-structured-session-acquire'
 
 export type {
   CodexStructuredLaunch,
@@ -64,164 +51,60 @@ export class CodexStructuredSessionAdapter implements StructuredAgentSessionAdap
   private readonly sessions = new Map<string, CodexSession>()
   private readonly acquisitions = new CodexAcquisitionRegistry()
   private readonly turnCancellation: CodexStructuredTurnCancellation
+  private readonly notificationRetries: ReturnType<typeof createCodexStructuredNotificationRetry>
 
   constructor(private readonly deps: CodexStructuredSessionAdapterDeps) {
+    this.notificationRetries = createCodexStructuredNotificationRetry({
+      sessionFor: (sessionId) => this.sessions.get(sessionId),
+      translate: (sessionId, session, method, params) =>
+        this.translateNotification(sessionId, session, method, params)
+    })
     this.turnCancellation = new CodexStructuredTurnCancellation({
       captureTurnProcesses: deps.captureTurnProcesses,
       terminateTurnProcesses: deps.terminateTurnProcesses,
       requestTimeoutMs: deps.requestTimeoutMs,
-      emit: (session, event) => this.emit(session, event)
+      emit: (session, event) => {
+        const admission = this.emit(session, event)
+        if (!admission.accepted && event.type === 'notification') {
+          this.notificationRetries.handle(event.sessionId, event.method, event.params)
+        }
+        return admission
+      }
     })
   }
 
   supportsLocation = supportsCodexStructuredLocation
 
-  async acquire(input: StructuredAgentSessionAcquireInput): Promise<AgentSessionAcquisition> {
-    const sessionId = input.identity.sessionId
-    const { previousAttempt, attempt } = this.acquisitions.start(sessionId)
-    const acquisition = attempt.window
-    let primaryThreadId =
-      input.identity.providerHandle.kind === 'codex' ? input.identity.providerHandle.threadId : null
-    const translator = input.events
-      ? createCodexJournalTranslator({
-          sink: input.events,
-          primaryThreadId: () => primaryThreadId,
-          bindPromptItemId: (journalItemId, threadId, promptKey) =>
-            acquisition.prompts.bindJournalItemId(journalItemId, threadId, promptKey)
-        })
-      : null
-    const open = this.deps.openConnection ?? openCodexAppServerConnection
-
-    try {
-      await stopSupersededCodexAcquisition({
-        sessionId,
-        registry: this.acquisitions,
-        replacement: attempt,
-        previous: previousAttempt
-      })
-      this.acquisitions.assertCurrent(sessionId, attempt)
-      if (!(await closeCodexPublishedSession(this.sessions, sessionId, this.deps.onEvent))) {
-        throw new Error(`codex app-server for session ${sessionId} could not be stopped`)
-      }
-      this.acquisitions.assertCurrent(sessionId, attempt)
-      const launch = await this.deps
-        .resolveLaunch({ identity: input.identity })
-        .catch((error: unknown) => {
-          throw new AgentSessionPreSpawnError(error)
-        })
-      this.acquisitions.assertCurrent(sessionId, attempt)
-      const connection = await open(
-        {
-          command: launch.command,
-          args: launch.args,
-          cwd: launch.cwd,
-          env: buildCodexStructuredChildEnvironment(launch, input.spawnToken)
-        },
-        {
-          onNotification: (method, params) =>
-            this.deliver(acquisition, sessionId, () =>
-              this.handleNotification(sessionId, method, params)
-            ),
-          onServerRequest: (request) =>
-            this.deliver(acquisition, sessionId, () =>
-              this.handleServerRequest(sessionId, request)
-            ),
-          onUnhandledFrame: (kind, payload) =>
-            this.deliver(acquisition, sessionId, () =>
-              this.handleUnhandledFrame(sessionId, kind, payload)
-            ),
-          onExit: (error) => {
-            acquisition.prompts.clear()
-            handleCodexSessionExit({
-              sessions: this.sessions,
-              sessionId,
-              connection: acquisition.connection,
-              error,
-              ...(this.deps.onEvent ? { onEvent: this.deps.onEvent } : {})
-            })
-          }
-        }
-      )
-      acquisition.connection = connection
-      this.acquisitions.assertCurrent(sessionId, attempt)
-      const opened = await openCodexThread(connection, launch, this.deps.requestTimeoutMs)
-      this.acquisitions.assertCurrent(sessionId, attempt)
-      primaryThreadId = opened.threadId
-      translator?.restoreThread(opened.threadId, opened.thread ?? {})
-      const process = await codexProcessIdentity(
-        { ...input, pid: connection.pid },
-        this.deps.readProcessStartTime
-      )
-      this.acquisitions.assertCurrent(sessionId, attempt)
-      const acquired: AgentSessionAcquisition = {
-        process,
-        link: codexProviderHandleLink({
-          threadId: opened.threadId,
-          resumed: launch.resumeThreadId !== null,
-          fence: input.fence,
-          linkId: this.deps.mintLinkId?.(),
-          observedAt: this.deps.now?.() ?? Date.now()
-        })
-      }
-      // Publish only after every promised identity is proven and this attempt still owns the child.
-      if (connection.closed) {
-        throw new Error(`codex app-server for session ${sessionId} exited while being acquired`)
-      }
-      const session: CodexSession = {
-        connection,
-        ended: false,
-        threadId: opened.threadId,
-        historyPath: opened.historyPath,
-        prompts: acquisition.prompts,
-        options: restoredCodexSessionOptions(input.options),
-        reportedOptions: reportedCodexThreadOptions(opened),
-        turnIdWaiters: [],
-        translator
-      }
-      if (input.validateOptions && input.options) {
-        await validateCodexStructuredSessionInitialOptions(
-          session,
-          input.options,
-          this.deps.requestTimeoutMs
-        )
-      }
-      if (connection.closed) {
-        throw new Error(`codex app-server for session ${sessionId} exited while being acquired`)
-      }
-      this.acquisitions.publishIfCurrent(sessionId, attempt, () => {
-        this.turnCancellation.register(session)
-        this.sessions.set(sessionId, session)
-      })
-      for (const event of acquisition.drain()) {
-        event()
-      }
-      return acquired
-    } catch (error) {
-      // Reap this attempt's child only. A replacement already published for the
-      // same session keeps running.
-      if (this.sessions.get(sessionId)?.connection !== acquisition.connection) {
-        return closeFailedCodexAcquisition({
-          sessionId,
-          registry: this.acquisitions,
-          attempt,
-          cause: error,
-          dispose: () => translator?.dispose()
-        })
-      }
-      this.acquisitions.deleteIfCurrent(sessionId, attempt)
-      throw error
-    } finally {
-      attempt.finish()
-    }
-  }
+  acquire = (input: StructuredAgentSessionAcquireInput): Promise<AgentSessionAcquisition> =>
+    acquireCodexStructuredSession(
+      {
+        deps: this.deps,
+        sessions: this.sessions,
+        acquisitions: this.acquisitions,
+        turnCancellation: this.turnCancellation,
+        deliver: (acquisition, sessionId, event, retainedBytes) =>
+          this.deliver(acquisition, sessionId, event, retainedBytes),
+        handleNotification: (sessionId, method, params) =>
+          this.handleNotification(sessionId, method, params),
+        handleServerRequest: (sessionId, request) => this.handleServerRequest(sessionId, request),
+        handleUnhandledFrame: (sessionId, kind, params) =>
+          this.handleUnhandledFrame(sessionId, kind, params),
+        clearNotificationRetries: (sessionId, connection) =>
+          this.notificationRetries.clear(sessionId, connection),
+        forceCloseUnexpected: (sessionId, fence, generation, reason) =>
+          this.forceCloseUnexpected(sessionId, fence, generation, reason)
+      },
+      input
+    )
 
   /** Buffers pre-publication events and drops events from superseded children. */
   private deliver(
     acquisition: CodexAcquisitionAttempt['window'],
     sessionId: string,
-    event: () => void
+    event: () => void,
+    retainedBytes?: number
   ): void {
-    if (acquisition.buffer(event)) {
+    if (acquisition.buffer(event, retainedBytes)) {
       return
     }
     if (this.sessions.get(sessionId)?.connection === acquisition.connection) {
@@ -229,20 +112,39 @@ export class CodexStructuredSessionAdapter implements StructuredAgentSessionAdap
     }
   }
 
-  private handleNotification(sessionId: string, method: string, params: unknown): void {
-    const session = this.sessions.get(sessionId)
-    if (session && this.turnCancellation.handleNotification(sessionId, session, method, params)) {
-      return
+  private translateNotification(
+    sessionId: string,
+    session: CodexSession,
+    method: string,
+    params: unknown
+  ): CodexJournalTranslationAdmission {
+    if (this.turnCancellation.handleNotification(sessionId, session, method, params)) {
+      return { accepted: true }
     }
-    deliverCodexNotification(sessionId, session, method, params, (session, event) =>
-      this.emit(session, event)
+    return deliverCodexNotification(sessionId, session, method, params, (current, event) =>
+      this.emit(current, event)
     )
   }
 
+  private handleNotification(sessionId: string, method: string, params: unknown): void {
+    const session = this.sessions.get(sessionId)
+    if (!session) {
+      return
+    }
+    this.notificationRetries.handle(sessionId, method, params)
+  }
+
   /** Journal first so observers never see an event ahead of its durable row. */
-  private emit(session: CodexSession, event: CodexStructuredSessionEvent): void {
-    session.translator?.handle(event)
+  private emit(
+    session: CodexSession,
+    event: CodexStructuredSessionEvent
+  ): CodexJournalTranslationAdmission {
+    const admission = session.translator?.handle(event) ?? { accepted: true }
+    if (!admission.accepted) {
+      return admission
+    }
     this.deps.onEvent?.(event)
+    return admission
   }
 
   private handleServerRequest(
@@ -262,6 +164,30 @@ export class CodexStructuredSessionAdapter implements StructuredAgentSessionAdap
       params,
       (session, event) => this.emit(session, event)
     )
+  }
+
+  private forceCloseUnexpected(
+    sessionId: string,
+    fence: number,
+    acquisitionGeneration: string,
+    reason: Error
+  ): Promise<boolean> {
+    const session = this.sessions.get(sessionId)
+    if (
+      !session ||
+      session.ended ||
+      session.fence !== fence ||
+      session.acquisitionGeneration !== acquisitionGeneration
+    ) {
+      return Promise.resolve(false)
+    }
+    return closeCodexPublishedSession(this.sessions, sessionId, this.deps.onEvent, {
+      allowFailedSettlement: true,
+      requestedClose: false,
+      expectedFence: fence,
+      expectedAcquisitionGeneration: acquisitionGeneration,
+      unexpectedReason: reason
+    })
   }
 
   bindPromptItemId = (sessionId: string, journalItemId: string, promptKey: string): void =>
@@ -290,6 +216,7 @@ export class CodexStructuredSessionAdapter implements StructuredAgentSessionAdap
     fence: number
   }): Promise<void> => {
     answerCodexSessionPrompt(this.sessions, input)
+    this.sessions.get(input.sessionId)?.translator?.resolvePrompt(input.itemId)
   }
 
   setOption = async (
@@ -304,8 +231,28 @@ export class CodexStructuredSessionAdapter implements StructuredAgentSessionAdap
     identity: AgentSessionJournalIdentity
   }): Promise<string | null> => codexSessionHistoryFilePath(this.sessions, input.identity)
 
-  closeSession = (sessionId: string): Promise<boolean> =>
-    closeCodexSession(sessionId, this.sessions, this.acquisitions, this.deps.onEvent)
+  closeSession = async (sessionId: string): Promise<boolean> => {
+    const closed = await closeCodexSession(
+      sessionId,
+      this.sessions,
+      this.acquisitions,
+      this.deps.onEvent
+    )
+    if (closed) {
+      this.notificationRetries.clear(sessionId, null)
+    }
+    return closed
+  }
+  forceCloseSession = async (sessionId: string): Promise<boolean> => {
+    const closed = await closeCodexPublishedSession(this.sessions, sessionId, this.deps.onEvent, {
+      allowFailedSettlement: true,
+      requestedClose: false
+    })
+    if (closed) {
+      this.notificationRetries.clear(sessionId, null)
+    }
+    return closed
+  }
   disposeSession = (sessionId: string): Promise<boolean> => this.closeSession(sessionId)
   closeAll = (): Promise<void> =>
     closeAllCodexSessions(this.sessions, this.acquisitions, (sessionId) =>

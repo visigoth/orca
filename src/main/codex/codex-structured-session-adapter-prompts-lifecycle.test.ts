@@ -344,7 +344,10 @@ describe('CodexStructuredSessionAdapter lifecycle', () => {
     expect(events.at(-1)).toEqual({
       type: 'ended',
       sessionId: 'session-1',
-      reason: 'codex app-server connection ended'
+      reason: 'codex app-server connection ended',
+      cause: 'unexpected-exit',
+      fence: 7,
+      acquisitionGeneration: expect.any(String)
     })
     await expect(
       adapter.dispatch({

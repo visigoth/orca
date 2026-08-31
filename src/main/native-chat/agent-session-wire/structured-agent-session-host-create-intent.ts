@@ -19,7 +19,7 @@ import type {
   StructuredAgentSessionCaller
 } from './structured-agent-session-host-types'
 
-type CreateIntentContext = {
+export type StructuredAgentSessionCreateIntentContext = {
   deps: StructuredAgentSessionHostDeps
   sessions: ReadonlyMap<string, StructuredAgentSessionHostSession>
   activeCreateIntents: Set<string>
@@ -30,8 +30,47 @@ type CreateIntentContext = {
   ) => Promise<AgentSessionMutationResult<AgentSessionAttachResult>>
 }
 
+export type StructuredAgentSessionCreateIntentSurface = {
+  admitOrReplayCreateIntent: (
+    caller: StructuredAgentSessionCaller,
+    envelope: Parameters<typeof admitOrReplayCreateIntent>[2]
+  ) => ReturnType<typeof admitOrReplayCreateIntent>
+  settleCreateIntentRefusal: (
+    caller: StructuredAgentSessionCaller,
+    envelope: Parameters<typeof settleCreateIntentRefusal>[2],
+    refusal: Parameters<typeof settleCreateIntentRefusal>[3]
+  ) => ReturnType<typeof settleCreateIntentRefusal>
+  releaseCreateIntentAdmission: (
+    caller: StructuredAgentSessionCaller,
+    envelope: Parameters<typeof releaseCreateIntentAdmission>[2]
+  ) => void
+}
+
+export function createStructuredAgentSessionCreateIntentContext(
+  deps: StructuredAgentSessionHostDeps,
+  sessions: ReadonlyMap<string, StructuredAgentSessionHostSession>,
+  activeCreateIntents: Set<string>,
+  now: () => number,
+  attach: StructuredAgentSessionCreateIntentContext['attach']
+): StructuredAgentSessionCreateIntentContext {
+  return { deps, sessions, activeCreateIntents, now, attach }
+}
+
+export function createStructuredAgentSessionCreateIntentSurface(
+  context: () => StructuredAgentSessionCreateIntentContext
+): StructuredAgentSessionCreateIntentSurface {
+  return {
+    admitOrReplayCreateIntent: (caller, envelope) =>
+      admitOrReplayCreateIntent(context(), caller, envelope),
+    settleCreateIntentRefusal: (caller, envelope, refusal) =>
+      settleCreateIntentRefusal(context(), caller, envelope, refusal),
+    releaseCreateIntentAdmission: (caller, envelope) =>
+      releaseCreateIntentAdmission(context(), caller, envelope)
+  }
+}
+
 export async function admitOrReplayCreateIntent(
-  context: CreateIntentContext,
+  context: StructuredAgentSessionCreateIntentContext,
   caller: StructuredAgentSessionCaller,
   envelope: AgentSessionMutationEnvelope
 ): Promise<AgentSessionMutationResult<AgentSessionAttachResult> | null> {
@@ -93,7 +132,7 @@ export async function admitOrReplayCreateIntent(
 }
 
 export async function settleCreateIntentRefusal(
-  context: CreateIntentContext,
+  context: StructuredAgentSessionCreateIntentContext,
   caller: StructuredAgentSessionCaller,
   envelope: AgentSessionMutationEnvelope,
   refusal: AgentSessionWireRefusal
@@ -116,7 +155,7 @@ export async function settleCreateIntentRefusal(
 }
 
 export function releaseCreateIntentAdmission(
-  context: CreateIntentContext,
+  context: StructuredAgentSessionCreateIntentContext,
   caller: StructuredAgentSessionCaller,
   envelope: AgentSessionMutationEnvelope
 ): void {

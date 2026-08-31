@@ -183,11 +183,11 @@ describe('CodexStructuredSessionAdapter.acquire', () => {
 
     expect(codex.connections[0].calls[0]).toEqual({
       method: 'thread/resume',
-      params: {
+      params: expect.objectContaining({
         threadId: 'thread-proven',
         cwd: '/work/repo',
         path: '/rollouts/thread-proven.jsonl'
-      }
+      })
     })
     expect(acquisition.link.origin).toBe('resumed')
     expect(acquisition.link.handle).toEqual({ provider: 'codex', threadId: 'thread-proven' })
