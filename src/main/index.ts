@@ -355,6 +355,7 @@ import { resolvePluginHostEntryPath } from './plugins/plugin-host-process'
 import { applyPluginConsent, applyPluginEnablement } from './plugins/plugin-enablement'
 import { setPluginServiceForRpc } from './runtime/rpc/methods/plugins'
 import { setEphemeralVmDepsForRpc } from './runtime/rpc/methods/ephemeral-vm'
+import { registerSshHandlers } from './ipc/ssh'
 import {
   normalizePluginConsents,
   normalizePluginIdList
@@ -3346,6 +3347,20 @@ void app.whenReady().then(async () => {
   }
   // Why: existing installs may have pairing creds under the late app.getPath('userData'); copy them forward before switching to the canonical path.
   migrateMobilePairingDataToCanonicalUserDataPath(app.getPath('userData'))
+
+  // Why: SSH handlers are otherwise registered only by attachMainWindowServices, which runs when
+  // a BrowserWindow attaches. `orca serve` never creates one (deferUntilFirstWindow is false in
+  // serve mode), so on a headless host the SSH connection store stays null and anything needing
+  // it fails with "SSH handlers are not registered." That includes every environment recipe using
+  // SSH connection mode — the recipe provisions its environment successfully and then cannot be
+  // connected to, leaving a booted sandbox stranded.
+  //
+  // The window getter is already typed `() => BrowserWindow | null` and the credential prompt and
+  // advertised-URL refresh both handle null, so headless registration is the same call with no
+  // window rather than a separate code path.
+  if (serveOptions && store) {
+    registerSshHandlers(store, () => null, runtime)
+  }
   runtimeRpc = new OrcaRuntimeRpcServer({
     runtime,
     // Why: mobile pairing needs the stable pre-setName() path (getCanonicalUserDataPath), not a late app.getPath('userData') that drops paired devices across restarts.
