@@ -90,6 +90,11 @@ describe('browserManager viewport partial failure', () => {
       } as Electron.MouseWheelInputEvent
     )
     expect(preventDefault).toHaveBeenCalledTimes(1)
+    expect(renderer.send).toHaveBeenCalledWith('ui:scrollBrowserPage', {
+      browserPageId: 'tab-partial-apply',
+      deltaX: 0,
+      deltaY: 120
+    })
   })
 
   it('keeps host panning available when metrics setup fails', async () => {
