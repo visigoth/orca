@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import type React from 'react'
+import React, { forwardRef, useImperativeHandle } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
@@ -17,6 +17,8 @@ const mocks = vi.hoisted(() => ({
     launchDraft?: unknown
     launchDraftResolved?: boolean
   },
+  handlePasteEvent: vi.fn(),
+  pasteFromClipboard: vi.fn(),
   submissions: [] as unknown[],
   launchDraftSignal: { launchDraft: null as unknown, launchDraftResolved: false }
 }))
@@ -95,6 +97,14 @@ vi.mock('./use-native-chat-font-scale', () => ({
   useNativeChatFontScale: () => ({ scale: 1 })
 }))
 
+vi.mock('./use-native-chat-launch-draft-adoption', () => ({
+  useNativeChatLaunchDraftSignal: () => mocks.launchDraftSignal
+}))
+
+vi.mock('./use-native-chat-paste-bridge', () => ({
+  useNativeChatPasteBridge: () => undefined
+}))
+
 vi.mock('./use-native-chat-file-link-context', () => ({
   useNativeChatFileLinkContext: () => ({
     worktreeId: 'wt-1',
@@ -115,10 +125,16 @@ vi.mock('./NativeChatMessageList', () => ({
 }))
 
 vi.mock('./NativeChatComposer', () => ({
-  NativeChatComposer: (props: typeof mocks.composerProps) => {
+  NativeChatComposer: forwardRef((props: typeof mocks.composerProps, ref) => {
     mocks.composerProps = props
-    return null
-  }
+    useImperativeHandle(ref, () => ({
+      focus: () => true,
+      insertTypedText: () => true,
+      handlePasteEvent: mocks.handlePasteEvent,
+      pasteFromClipboard: mocks.pasteFromClipboard
+    }))
+    return <textarea data-testid="structured-composer" />
+  })
 }))
 vi.mock('./NativeChatEmptyState', () => ({ NativeChatEmptyState: () => null }))
 vi.mock('./NativeChatApprovalCard', () => ({ NativeChatApprovalCard: () => null }))
@@ -133,8 +149,29 @@ describe('NativeChatStructuredSession', () => {
     mocks.mode = 'static'
     mocks.messageListProps = null
     mocks.composerProps = null
+    mocks.handlePasteEvent.mockReset()
+    mocks.pasteFromClipboard.mockReset()
     mocks.submissions = []
     mocks.launchDraftSignal = { launchDraft: null as unknown, launchDraftResolved: false }
+  })
+
+  it('routes app-menu paste into the structured composer', () => {
+    render(
+      <NativeChatStructuredSession
+        isVisible
+        tabId="structured-tab-paste"
+        sessionId="session-paste"
+        target={{ kind: 'local' }}
+        agent="codex"
+        allowFileUriLinks
+      />
+    )
+
+    const composer = screen.getByTestId('structured-composer')
+    composer.focus()
+    window.dispatchEvent(new Event('orca-app-menu-paste', { cancelable: true }))
+
+    expect(mocks.pasteFromClipboard).toHaveBeenCalledOnce()
   })
 
   it('wires local structured file links through the native chat opener', () => {
