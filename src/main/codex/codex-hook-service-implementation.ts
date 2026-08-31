@@ -28,6 +28,11 @@ import {
 } from './codex-wsl-hook-install-plan'
 import type { CodexTrustEntry } from './config-toml-trust'
 
+/** Lane-scoped so the hooks-on install never joins the hooks-off refresh. */
+function launchPrepKey(lane: 'install' | 'refresh', runtimeHomePath: string): string {
+  return `${lane}\0${normalizeRuntimePathForComparison(runtimeHomePath)}`
+}
+
 export class CodexHookService {
   async refreshManagedScripts(): Promise<void> {
     await refreshManagedScriptIfPresent(getManagedScriptPath(), getManagedScript())
@@ -140,20 +145,11 @@ export class CodexHookService {
       return Promise.resolve(null)
     }
     const targetKey = target?.runtime === 'wsl' ? target.wslDistro?.trim().toLowerCase() : ''
-    const key = `${getWslReconciliationKey(runtimeHomePath)}\0${targetKey ?? ''}`
-    const active = this.wslInstallsInFlight.get(key)
-    if (active) {
-      return active
-    }
-    const install = this.installForRuntimeHome(runtimeHomePath, target)
-    this.wslInstallsInFlight.set(key, install)
-    const clear = (): void => {
-      if (this.wslInstallsInFlight.get(key) === install) {
-        this.wslInstallsInFlight.delete(key)
-      }
-    }
-    void install.then(clear, clear)
-    return install
+    return this.shareInFlight(
+      this.wslInstallsInFlight,
+      `${getWslReconciliationKey(runtimeHomePath)}\0${targetKey ?? ''}`,
+      () => this.installForRuntimeHome(runtimeHomePath, target)
+    )
   }
 
   refreshRuntimeUserHooksForRuntimeHome(
@@ -193,39 +189,49 @@ export class CodexHookService {
    * globally per Codex home, so activating a multi-pane worktree used to pay one
    * full hook install per pane back to back (measured ~790ms for 7 panes, and a
    * resumed Codex pane prepares twice). Spawns racing for the same home all want
-   * the same on-disk outcome, so they share one run.
+   * the same on-disk outcome, so they share one run — the same reason the WSL
+   * lane above shares `installForRuntimeHome`.
    *
-   * Invalidation: the shared promise is dropped the moment it settles, so the
+   * Invalidation: `shareInFlight` drops the run the moment it settles, so the
    * next launch re-reads hooks.json and the user's trust state. Never widen this
    * into a time-based cache — the hooks setting, ~/.codex approvals and the
    * managed script can all change between spawns, and only a fresh run sees them.
-   * The key is the runtime home, so per-account homes never share a run.
    */
   installForLaunchPrep(runtimeHomePath?: string): Promise<AgentHookInstallStatus> {
     const homePath = runtimeHomePath ?? getOrcaManagedCodexHomePath()
-    return this.shareLaunchPrep('install', homePath, () => this.install(homePath))
+    return this.shareInFlight(this.launchPrepInFlight, launchPrepKey('install', homePath), () =>
+      this.install(homePath)
+    )
   }
 
   refreshRuntimeUserHooksForLaunchPrep(runtimeHomePath?: string): Promise<AgentHookInstallStatus> {
     const homePath = runtimeHomePath ?? getOrcaManagedCodexHomePath()
-    return this.shareLaunchPrep('refresh', homePath, () => this.refreshRuntimeUserHooks(homePath))
+    return this.shareInFlight(this.launchPrepInFlight, launchPrepKey('refresh', homePath), () =>
+      this.refreshRuntimeUserHooks(homePath)
+    )
   }
 
-  private shareLaunchPrep(
-    lane: 'install' | 'refresh',
-    runtimeHomePath: string,
-    start: () => Promise<AgentHookInstallStatus>
-  ): Promise<AgentHookInstallStatus> {
-    const key = `${lane}\0${normalizeRuntimePathForComparison(runtimeHomePath)}`
-    const active = this.launchPrepInFlight.get(key)
+  /**
+   * Shares one in-flight run per key. Generic over the run's result so the WSL
+   * lane (nullable) and the launch-prep lane keep their own maps and exact
+   * types; a single map would need a cast at every read.
+   */
+  private shareInFlight<T>(
+    runs: Map<string, Promise<T>>,
+    key: string,
+    start: () => Promise<T>
+  ): Promise<T> {
+    const active = runs.get(key)
     if (active) {
       return active
     }
     const run = start()
-    this.launchPrepInFlight.set(key, run)
+    runs.set(key, run)
+    // Why: clear on rejection too, or one failed install would wedge every
+    // later launch onto the same rejected promise.
     const clear = (): void => {
-      if (this.launchPrepInFlight.get(key) === run) {
-        this.launchPrepInFlight.delete(key)
+      if (runs.get(key) === run) {
+        runs.delete(key)
       }
     }
     void run.then(clear, clear)

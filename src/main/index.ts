@@ -1260,7 +1260,7 @@ async function prepareCodexRuntimeHomeForLaunch(
   try {
     // Why: honor the persisted off switch so post-startup launches can't reinstall removed hooks.
     const status = hooksEnabled
-      ? ((await codexHookService.installForRuntimeHome(runtimeHomePath, hookTarget)) ??
+      ? ((await codexHookService.installForRuntimeHomeSerialized(runtimeHomePath, hookTarget)) ??
         // Why: a managed account's launch home is its own self-contained
         // CODEX_HOME, so hooks/trust must install there, not the shared mirror.
         (await codexHookService.installForLaunchPrep(runtimeHomePath ?? undefined)))
