@@ -37,6 +37,8 @@ export const ROOT_HELP_TEXT_PRIMARY = [
   '',
   'Environment Recipes:',
   '  vm recipe list            List environment recipes available for a repo',
+  '  plugin list               List plugins installed on this runtime',
+  '  plugin approve            Review and approve a plugin so it becomes active',
   '  vm recipe doctor          Validate a per-workspace environment recipe',
   '  vm runtime list           List provisioned per-workspace environments',
   '  vm runtime cleanup        Destroy a provisioned environment and release its SSH target',

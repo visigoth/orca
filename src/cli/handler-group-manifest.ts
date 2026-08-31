@@ -243,6 +243,11 @@ export const HANDLER_GROUPS: readonly HandlerGroup[] = [
     load: async () => (await import('./handlers/vm-runtime.js')).VM_RUNTIME_HANDLERS
   },
   {
+    name: 'plugin',
+    keys: ['plugin list', 'plugin approve', 'plugin set-enabled'],
+    load: async () => (await import('./handlers/plugin.js')).PLUGIN_HANDLERS
+  },
+  {
     name: 'vm',
     keys: ['vm recipe list', 'vm recipe doctor'],
     load: async () => (await import('./handlers/vm.js')).VM_HANDLERS
