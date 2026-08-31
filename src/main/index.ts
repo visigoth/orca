@@ -354,6 +354,7 @@ import { resolveBundledPluginRoot } from './plugins/plugin-bundled-bootstrap'
 import { resolvePluginHostEntryPath } from './plugins/plugin-host-process'
 import { applyPluginConsent, applyPluginEnablement } from './plugins/plugin-enablement'
 import { setPluginServiceForRpc } from './runtime/rpc/methods/plugins'
+import { setEphemeralVmDepsForRpc } from './runtime/rpc/methods/ephemeral-vm'
 import {
   normalizePluginConsents,
   normalizePluginIdList
@@ -3088,6 +3089,9 @@ void app.whenReady().then(async () => {
     applyEnablement: (pluginKey, enabled) =>
       applyPluginEnablement({ store: store!, pluginService: pluginService!, pluginKey, enabled })
   })
+  // Why: same reasoning for environment recipes — the CLI reaches them over runtime RPC, and
+  // provisioning needs the settings Store and the plugin registry that RpcContext does not carry.
+  setEphemeralVmDepsForRpc(store!, pluginService)
   // Lazy kernel: initialize() only discovers manifests — no worker forks, no
   // panel reads. Zero plugin code runs before an explicit trigger.
   void pluginService
@@ -3615,6 +3619,7 @@ app.on('will-quit', (e) => {
   // the teardown barrier below — quitting before it resolves would let
   // Electron exit first and orphan the hosts.
   setPluginServiceForRpc(null)
+  setEphemeralVmDepsForRpc(null)
   pluginKillListService = null
   pluginMarketplaceService = null
   pluginMarketplaceInstaller = null
