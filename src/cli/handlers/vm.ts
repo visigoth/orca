@@ -22,6 +22,31 @@ import {
 import type { OrcaVmRecipe } from '../../shared/orca-yaml-hook-types'
 
 export const VM_HANDLERS: Record<string, CommandHandler> = {
+  // Why runtime RPC rather than reading orca.yaml here: plugin-contributed recipes are not in
+  // any repo file, and they are exactly the ones offered for every repo. Only the runtime can
+  // combine the two sources, so listing locally would hide half the answer.
+  'vm recipe list': async ({ flags, client, json }) => {
+    const repo = getStringFlag(flags, 'repo')
+    if (!repo) {
+      throw new RuntimeClientError('invalid_argument', 'Missing --repo selector.')
+    }
+    const response = await client.call<{ recipes?: { id: string; name: string }[] }>(
+      'vm.listRecipes',
+      { repo }
+    )
+    if (json) {
+      console.log(JSON.stringify(response, null, 2))
+      return
+    }
+    const recipes = response.result?.recipes ?? []
+    if (recipes.length === 0) {
+      console.log('No environment recipes for this repo.')
+      return
+    }
+    for (const recipe of recipes) {
+      console.log(`${recipe.id}\t${recipe.name}`)
+    }
+  },
   'vm recipe doctor': async ({ flags, cwd, json }) => {
     const recipeId = getStringFlag(flags, 'recipe-id')
     if (!recipeId) {
