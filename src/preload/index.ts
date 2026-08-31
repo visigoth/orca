@@ -2778,6 +2778,16 @@ const api = {
       override: BrowserViewportOverride | null
     }): Promise<boolean> => ipcRenderer.invoke('browser:setViewportOverride', args),
 
+    reportViewportScrollState: (args: {
+      browserPageId: string
+      state: {
+        scrollLeft: number
+        scrollTop: number
+        maxScrollLeft: number
+        maxScrollTop: number
+      }
+    }): void => ipcRenderer.send('browser:reportViewportScrollState', args),
+
     setAnnotationViewportBridge: (args): Promise<boolean> =>
       ipcRenderer.invoke('browser:setAnnotationViewportBridge', args),
 

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import {
   applyBrowserPageViewportLayout,
   ensureBrowserPageViewport,
+  getBrowserPageViewportScrollState,
   getBrowserOverlaySlotViewport,
   getBrowserPageViewportContainer,
   parkBrowserPageViewport,
@@ -84,6 +85,26 @@ describe('ensureBrowserPageViewport', () => {
 
     expect(viewport.scroller.scrollLeft).toBe(32)
     expect(viewport.scroller.scrollTop).toBe(48)
+  })
+
+  it('reports host scroll position and available range for wheel routing', () => {
+    mountSlotViewport('workspace-1')
+    const viewport = ensureBrowserPageViewport('page-1', 'workspace-1')!
+    Object.defineProperties(viewport.scroller, {
+      scrollLeft: { configurable: true, value: 12 },
+      scrollTop: { configurable: true, value: 18 },
+      scrollWidth: { configurable: true, value: 900 },
+      scrollHeight: { configurable: true, value: 700 },
+      clientWidth: { configurable: true, value: 500 },
+      clientHeight: { configurable: true, value: 400 }
+    })
+
+    expect(getBrowserPageViewportScrollState('page-1')).toEqual({
+      scrollLeft: 12,
+      scrollTop: 18,
+      maxScrollLeft: 400,
+      maxScrollTop: 300
+    })
   })
 
   it('creates a flex viewport with chrome inset and container under the slot root', () => {

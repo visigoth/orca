@@ -43,6 +43,7 @@ import { useBrowserPageWebviewLifecycle } from '../host-guest/use-browser-page-w
 import { useBrowserPageWebviewPartition } from '../host-guest/use-browser-page-webview-partition'
 import { useBrowserPageWebviewUrlSync } from '../navigate/use-browser-page-webview-url-sync'
 import { useBrowserPageZoomFeedback } from '../host-guest/use-browser-page-zoom-feedback'
+import { useBrowserPageViewportScrollReporting } from '../host-guest/use-browser-page-viewport-scroll-reporting'
 
 export function BrowserPagePane({
   browserTab,
@@ -93,6 +94,7 @@ export function BrowserPagePane({
       preset ? { width: preset.width, height: preset.height } : null
     )
   }, [browserTab.id, browserTab.viewportPresetId])
+  useBrowserPageViewportScrollReporting(browserTab.id, pageViewportScroller)
   useEffect(() => {
     const subscribe = window.api.ui.onScrollBrowserPage
     if (!subscribe || !pageViewportScroller || !browserTab.viewportPresetId) {

@@ -56,7 +56,8 @@ import type {
   BrowserCertificateFailure,
   BrowserLoadError,
   BrowserSessionUserAgentMode,
-  BrowserViewportOverride
+  BrowserViewportOverride,
+  BrowserViewportScrollState
 } from '../../shared/browser-workspace-types'
 import {
   type BrowserAnnotationViewportBridgeOptions,
@@ -264,8 +265,13 @@ export class BrowserManager {
   // Why: presence means the preset requires a CDP UA override (installed or in flight), so navigation
   // can re-issue it against the target URL's identity.
   private readonly viewportUaOverrideMobileByTabId = new Map<string, boolean>()
-  // Why: host-side wheel panning is only valid while a local emulated viewport is active.
-  private readonly viewportPresetActiveByTabId = new Map<string, boolean>()
+  // Why: host-side wheel panning is only valid while a local emulated viewport is active on
+  // the guest that owns this tab; replacement guests must not inherit a retired guest's state.
+  private readonly viewportPresetActiveByTabId = new Map<
+    string,
+    { guestWebContentsId: number; active: boolean }
+  >()
+  private readonly viewportScrollStateByTabId = new Map<string, BrowserViewportScrollState>()
   // Why: the confirmed CDP identity outranks getUserAgent; pending intent keeps rapid navigations
   // ordered without claiming a failed write was installed.
   private readonly authUserAgentOverrideStateByGuestId = new Map<
@@ -303,6 +309,36 @@ export class BrowserManager {
 
   setDictationShortcutForwardingPredicate(predicate: (() => boolean) | null): void {
     this.shouldForwardDictationShortcut = predicate
+  }
+
+  setViewportScrollState(
+    browserTabId: string,
+    rendererWebContentsId: number,
+    state: BrowserViewportScrollState
+  ): void {
+    if (this.rendererWebContentsIdByTabId.get(browserTabId) !== rendererWebContentsId) {
+      return
+    }
+    if (
+      ![state.scrollLeft, state.scrollTop, state.maxScrollLeft, state.maxScrollTop].every(
+        (value) => typeof value === 'number' && Number.isFinite(value) && value >= 0
+      )
+    ) {
+      return
+    }
+    this.viewportScrollStateByTabId.set(browserTabId, state)
+  }
+
+  recordViewportScrollDelta(browserTabId: string, deltaX: number, deltaY: number): void {
+    const state = this.viewportScrollStateByTabId.get(browserTabId)
+    if (!state) {
+      return
+    }
+    this.viewportScrollStateByTabId.set(browserTabId, {
+      ...state,
+      scrollLeft: Math.min(state.maxScrollLeft, Math.max(0, state.scrollLeft + deltaX)),
+      scrollTop: Math.min(state.maxScrollTop, Math.max(0, state.scrollTop + deltaY))
+    })
   }
 
   setBrowserGuestStateChangedListener(listener: ((worktreeId: string) => void) | null): void {
@@ -1397,6 +1433,8 @@ export class BrowserManager {
     const previousWebContentsId = this.webContentsIdByTabId.get(browserTabId)
     if (previousWebContentsId !== undefined && previousWebContentsId !== webContentsId) {
       this.retireStaleGuestWebContents(previousWebContentsId)
+      this.viewportPresetActiveByTabId.delete(browserTabId)
+      this.viewportScrollStateByTabId.delete(browserTabId)
     }
     this.webContentsIdByTabId.set(browserTabId, webContentsId)
     this.tabIdByWebContentsId.set(webContentsId, browserTabId)
@@ -1482,6 +1520,7 @@ export class BrowserManager {
     this.viewportOpsByTabId.delete(browserTabId)
     this.viewportUaOverrideMobileByTabId.delete(browserTabId)
     this.viewportPresetActiveByTabId.delete(browserTabId)
+    this.viewportScrollStateByTabId.delete(browserTabId)
     if (wcId !== undefined) {
       this.pendingNavigationByGuestId.delete(wcId)
     }
@@ -1517,6 +1556,8 @@ export class BrowserManager {
     const previousWebContentsId = this.webContentsIdByTabId.get(browserPageId)
     if (previousWebContentsId !== undefined && previousWebContentsId !== webContentsId) {
       this.retireStaleGuestWebContents(previousWebContentsId)
+      this.viewportPresetActiveByTabId.delete(browserPageId)
+      this.viewportScrollStateByTabId.delete(browserPageId)
     }
     this.webContentsIdByTabId.set(browserPageId, webContentsId)
     this.tabIdByWebContentsId.set(webContentsId, browserPageId)
@@ -1559,6 +1600,7 @@ export class BrowserManager {
     this.userAgentModeByPageId.clear()
     this.viewportUaOverrideMobileByTabId.clear()
     this.viewportPresetActiveByTabId.clear()
+    this.viewportScrollStateByTabId.clear()
     this.authUserAgentOverrideStateByGuestId.clear()
     this.pendingNavigationByGuestId.clear()
     this.pendingLoadFailuresByGuestId.clear()
@@ -1894,10 +1936,14 @@ export class BrowserManager {
     override: BrowserViewportOverride | null
   ): Promise<boolean> {
     // Why: chain per-tab so rapid toggles don't interleave CDP commands and the last-requested override wins.
+    const expectedWebContentsId = this.webContentsIdByTabId.get(browserTabId)
+    // The renderer resizes the host before CDP completes; discard the old geometry until it
+    // reports the new pane bounds so a pending preset cannot route wheel input using stale limits.
+    this.viewportScrollStateByTabId.delete(browserTabId)
     const prev = this.viewportOpsByTabId.get(browserTabId) ?? Promise.resolve()
     const next = prev
       .catch(() => {})
-      .then(() => this.doSetViewportOverrideImpl(browserTabId, override))
+      .then(() => this.doSetViewportOverrideImpl(browserTabId, override, expectedWebContentsId))
     this.viewportOpsByTabId.set(browserTabId, next)
     try {
       return await next
@@ -1962,10 +2008,11 @@ export class BrowserManager {
 
   private async doSetViewportOverrideImpl(
     browserTabId: string,
-    override: BrowserViewportOverride | null
+    override: BrowserViewportOverride | null,
+    expectedWebContentsId: number | undefined
   ): Promise<boolean> {
     const webContentsId = this.webContentsIdByTabId.get(browserTabId)
-    if (!webContentsId) {
+    if (!webContentsId || webContentsId !== expectedWebContentsId) {
       return false
     }
     const guest = webContents.fromId(webContentsId)
@@ -1998,6 +2045,12 @@ export class BrowserManager {
           deviceScaleFactor: override.deviceScaleFactor,
           mobile: override.mobile
         })
+        if (this.webContentsIdByTabId.get(browserTabId) === webContentsId) {
+          this.viewportPresetActiveByTabId.set(browserTabId, {
+            guestWebContentsId: webContentsId,
+            active: true
+          })
+        }
         await dbg.sendCommand('Emulation.setTouchEmulationEnabled', {
           enabled: override.mobile,
           maxTouchPoints: override.mobile ? 5 : 0
@@ -2011,6 +2064,12 @@ export class BrowserManager {
         }
       } else {
         await dbg.sendCommand('Emulation.clearDeviceMetricsOverride', {})
+        if (this.webContentsIdByTabId.get(browserTabId) === webContentsId) {
+          this.viewportPresetActiveByTabId.set(browserTabId, {
+            guestWebContentsId: webContentsId,
+            active: false
+          })
+        }
         await dbg.sendCommand('Emulation.setTouchEmulationEnabled', {
           enabled: false,
           maxTouchPoints: 0
@@ -2041,7 +2100,9 @@ export class BrowserManager {
           throw error
         }
       }
-      this.viewportPresetActiveByTabId.set(browserTabId, override !== null)
+      if (this.webContentsIdByTabId.get(browserTabId) !== webContentsId) {
+        return false
+      }
       return true
     } catch {
       return false
@@ -2229,8 +2290,36 @@ export class BrowserManager {
         guest,
         resolveRenderer: (tabId) =>
           resolveRendererWebContents(this.rendererWebContentsIdByTabId, tabId),
-        isViewportPresetActive: () => this.viewportPresetActiveByTabId.get(browserTabId) === true
+        isViewportPresetActive: () => {
+          const state = this.viewportPresetActiveByTabId.get(browserTabId)
+          return state?.guestWebContentsId === guest.id && state.active
+        },
+        canViewportScroll: (mouse) => this.canViewportScroll(browserTabId, mouse),
+        onViewportWheelConsumed: (deltaX, deltaY) =>
+          this.recordViewportScrollDelta(browserTabId, deltaX, deltaY)
       })
+    )
+  }
+
+  private canViewportScroll(browserTabId: string, mouse: Electron.MouseWheelInputEvent): boolean {
+    const state = this.viewportScrollStateByTabId.get(browserTabId)
+    if (!state) {
+      return false
+    }
+    const deltaX = typeof mouse.deltaX === 'number' ? mouse.deltaX : 0
+    const deltaY = typeof mouse.deltaY === 'number' ? mouse.deltaY : 0
+    const canScrollAxis = (delta: number, position: number, maximum: number): boolean => {
+      if (delta < 0) {
+        return position > 0
+      }
+      if (delta > 0) {
+        return position < maximum
+      }
+      return false
+    }
+    return (
+      canScrollAxis(deltaX, state.scrollLeft, state.maxScrollLeft) ||
+      canScrollAxis(deltaY, state.scrollTop, state.maxScrollTop)
     )
   }
 

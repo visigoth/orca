@@ -14,6 +14,13 @@ type BrowserPageViewport = {
   content: HTMLDivElement
 }
 
+export type BrowserPageViewportScrollState = {
+  scrollLeft: number
+  scrollTop: number
+  maxScrollLeft: number
+  maxScrollTop: number
+}
+
 const browserPageViewports = new Map<string, BrowserPageViewport>()
 
 // Why: React measures the chrome only on mount, but shells are rebuilt without a
@@ -169,6 +176,21 @@ export function scrollBrowserPageViewport(
   }
   scroller.scrollLeft += deltaX
   scroller.scrollTop += deltaY
+}
+
+export function getBrowserPageViewportScrollState(
+  browserPageId: string
+): BrowserPageViewportScrollState | null {
+  const scroller = browserPageViewports.get(browserPageId)?.scroller
+  if (!scroller) {
+    return null
+  }
+  return {
+    scrollLeft: Math.max(0, scroller.scrollLeft),
+    scrollTop: Math.max(0, scroller.scrollTop),
+    maxScrollLeft: Math.max(0, scroller.scrollWidth - scroller.clientWidth),
+    maxScrollTop: Math.max(0, scroller.scrollHeight - scroller.clientHeight)
+  }
 }
 
 export function subscribeBrowserPageViewportScroll(

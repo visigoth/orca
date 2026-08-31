@@ -18,7 +18,8 @@ describe('guest viewport wheel forwarding', () => {
       browserTabId: 'tab-1',
       guest: { on: guestOn } as unknown as Electron.WebContents,
       resolveRenderer: () => ({ send: rendererSend }) as unknown as Electron.WebContents,
-      isViewportPresetActive: () => active
+      isViewportPresetActive: () => active,
+      canViewportScroll: () => active
     })
     const handler = guestOn.mock.calls.at(-1)![1] as (
       event: Electron.Event,
@@ -58,5 +59,34 @@ describe('guest viewport wheel forwarding', () => {
     const zoomPreventDefault = trigger(true, { modifiers: ['ctrl'], deltaY: -120 })
     expect(zoomPreventDefault).toHaveBeenCalledTimes(1)
     expect(rendererSend).toHaveBeenLastCalledWith('ui:zoomBrowserPage', 'in')
+  })
+
+  it('leaves fitting presets and host-edge wheels to the guest page', () => {
+    setupGuestMouseWheelZoomForwarding({
+      browserTabId: 'tab-1',
+      guest: { on: guestOn } as unknown as Electron.WebContents,
+      resolveRenderer: () => ({ send: rendererSend }) as unknown as Electron.WebContents,
+      isViewportPresetActive: () => true,
+      canViewportScroll: () => false
+    })
+    const handler = guestOn.mock.calls.at(-1)![1] as (
+      event: Electron.Event,
+      input: Electron.MouseWheelInputEvent
+    ) => void
+    const preventDefault = vi.fn()
+    handler(
+      { preventDefault } as unknown as Electron.Event,
+      {
+        type: 'mouseWheel',
+        x: 0,
+        y: 0,
+        modifiers: [],
+        deltaX: 0,
+        deltaY: 120
+      } as Electron.MouseWheelInputEvent
+    )
+
+    expect(preventDefault).not.toHaveBeenCalled()
+    expect(rendererSend).not.toHaveBeenCalled()
   })
 })
