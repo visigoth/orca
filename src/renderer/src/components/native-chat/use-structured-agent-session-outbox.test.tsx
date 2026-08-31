@@ -287,6 +287,43 @@ describe('useStructuredAgentSessionOutbox', () => {
     expect(retryParams?.retryUnknown).toBe(true)
   })
 
+  it('continues probing an unknown head after repeated unknown results', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      let callCount = 0
+      mocks.call.mockImplementation(async (_target, _method, params) => {
+        const clientMessageId = (params as { envelope: { clientOperationId: string } }).envelope
+          .clientOperationId
+        callCount += 1
+        return callCount < 3
+          ? unknownResultFor(clientMessageId, callCount)
+          : acceptedResultFor(clientMessageId, callCount)
+      })
+      const { result } = renderHook(() =>
+        useStructuredAgentSessionOutbox({
+          sessionId: 'session-1',
+          target: LOCAL_TARGET,
+          fence: 1,
+          submissions: []
+        })
+      )
+
+      await act(async () => expect(await result.current.send('retry until confirmed')).toBe(true))
+      await waitFor(() => expect(result.current.outbox[0]?.state).toBe('unconfirmed'))
+      expect(mocks.call).toHaveBeenCalledOnce()
+
+      await act(async () => vi.advanceTimersByTimeAsync(1_000))
+      await waitFor(() => expect(mocks.call).toHaveBeenCalledTimes(2))
+      await waitFor(() => expect(result.current.outbox[0]?.state).toBe('unconfirmed'))
+
+      await act(async () => vi.advanceTimersByTimeAsync(2_000))
+      await waitFor(() => expect(mocks.call).toHaveBeenCalledTimes(3))
+      await waitFor(() => expect(result.current.outbox).toHaveLength(0))
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('rotates a history-rejected unknown head so the queued tail can advance', async () => {
     vi.mocked(globalThis.crypto.randomUUID)
       .mockReturnValueOnce('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')

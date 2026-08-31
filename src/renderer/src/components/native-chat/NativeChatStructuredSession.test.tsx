@@ -101,10 +101,6 @@ vi.mock('./use-native-chat-launch-draft-adoption', () => ({
   useNativeChatLaunchDraftSignal: () => mocks.launchDraftSignal
 }))
 
-vi.mock('./use-native-chat-paste-bridge', () => ({
-  useNativeChatPasteBridge: () => undefined
-}))
-
 vi.mock('./use-native-chat-file-link-context', () => ({
   useNativeChatFileLinkContext: () => ({
     worktreeId: 'wt-1',

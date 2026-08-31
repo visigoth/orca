@@ -203,9 +203,6 @@ export function useStructuredAgentSessionOutboxDispatch(args: {
       return
     }
     const attempts = probeAttemptsRef.current.id === probeId ? probeAttemptsRef.current.attempts : 0
-    if (attempts > 0) {
-      return
-    }
     const timer = setTimeout(
       () => {
         probeAttemptsRef.current = { id: probeId, attempts: attempts + 1 }
