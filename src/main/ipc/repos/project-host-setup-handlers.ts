@@ -38,7 +38,10 @@ function buildProjectHostSetupResult(store: Store, repo: Repo): ProjectHostSetup
   return { project, setup, repo }
 }
 
-function alignRepoWithRequestedProject(
+// Exported so the runtime RPC path can reuse it: an environment recipe on an SSH host registers
+// its checkout through addRemoteRepoFromPath (the local-git RPC refuses ssh: hosts), and must
+// then link the result to the requested project exactly the way the desktop flow does.
+export function alignRepoWithRequestedProject(
   store: Store,
   repo: Repo,
   projectId: string,
