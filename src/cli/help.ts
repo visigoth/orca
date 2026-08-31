@@ -174,6 +174,9 @@ export function formatFlagHelp(flag: string): string {
   const helpByFlag: Record<string, string> = {
     agent: '--agent <id>          Launch a known TUI agent in the first terminal',
     'base-branch': '--base-branch <ref>    Base branch/ref to create the worktree from',
+    plugin: '--plugin <key>        Plugin key, as shown by `orca plugin list`',
+    decision: '--decision <choice>   approve (default) or keep-disabled',
+    disable: '--disable             Disable instead of enable',
     command: '--command <text>       Command to run in the terminal on startup',
     comment: '--comment <text>       Comment stored in Orca metadata',
     cursor: '--cursor <n>           Line cursor from a previous read (returns only new output)',

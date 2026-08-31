@@ -36,6 +36,8 @@ export const ROOT_HELP_TEXT_PRIMARY = [
   '  environment rm            Remove a saved remote Orca runtime',
   '',
   'Environment Recipes:',
+  '  plugin list               List plugins installed on this runtime',
+  '  plugin approve            Review and approve a plugin so it becomes active',
   '  vm recipe doctor          Validate a per-workspace environment recipe',
   '',
   'Automations:',
