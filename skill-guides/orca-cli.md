@@ -248,12 +248,23 @@ publishing public artifact links", and then re-run the command. If they do not w
 it, deliver the file locally instead.
 
 ```text
+ORCA artifacts read <id-or-share-url> [--output <path>] [--json]
 ORCA artifacts share <file> --json
 ORCA artifacts update <file> --json
 ORCA artifacts unshare <file> --json
 ORCA artifacts list [--cursor <cursor>] --json
 ORCA artifacts delete <id> --json
 ```
+
+`artifacts read` retrieves the bounded rendered artifact bytes for a public share URL or
+artifact id. The current service renders Markdown as HTML, so the output is raw HTML for
+both source types; original Markdown is not available from this API. It does not open a
+browser or execute scripts. Human-readable output writes only the content to stdout (use
+`--output <path>` to save it); `--json` returns stable artifact metadata together with the
+content for pipelines. Public links can be read
+without signing in. If metadata is access-controlled, the active Orca account is used for
+that metadata request; the content URL itself must remain a public artifact share. Private,
+expired, and deleted artifacts fail without opening a browser.
 
 - `share`, `update`, and `unshare` accept `.html`, `.htm`, `.md`, and `.markdown` files.
 - `share` saves the returned edit token in the active Orca profile and never includes it
