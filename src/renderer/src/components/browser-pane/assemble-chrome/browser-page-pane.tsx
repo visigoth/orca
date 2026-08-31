@@ -94,7 +94,11 @@ export function BrowserPagePane({
       preset ? { width: preset.width, height: preset.height } : null
     )
   }, [browserTab.id, browserTab.viewportPresetId])
-  useBrowserPageViewportScrollReporting(browserTab.id, pageViewportScroller)
+  useBrowserPageViewportScrollReporting(
+    browserTab.id,
+    pageViewportScroller,
+    browserTab.viewportPresetId ?? null
+  )
   useEffect(() => {
     const subscribe = window.api.ui.onScrollBrowserPage
     if (!subscribe || !pageViewportScroller || !browserTab.viewportPresetId) {

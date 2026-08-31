@@ -73,7 +73,7 @@ describe('browserManager viewport partial failure', () => {
       maxScrollTop: 300
     })
 
-    const beforeMouseEvent = mocks.guestOnMock.mock.calls.find(
+    const beforeMouseEvent = mocks.guestOnMock.mock.calls.findLast(
       ([event]) => event === 'before-mouse-event'
     )?.[1] as ((event: Electron.Event, mouse: Electron.MouseInputEvent) => void) | undefined
     expect(beforeMouseEvent).toBeDefined()
@@ -90,5 +90,59 @@ describe('browserManager viewport partial failure', () => {
       } as Electron.MouseWheelInputEvent
     )
     expect(preventDefault).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps host panning available when metrics setup fails', async () => {
+    const { guest, debuggerSendCommand } = makeGuest(42422)
+    debuggerSendCommand.mockImplementation((method: string) =>
+      method === 'Emulation.setDeviceMetricsOverride'
+        ? Promise.reject(new Error('metrics setup failed'))
+        : Promise.resolve(undefined)
+    )
+    mocks.webContentsFromIdMock.mockReturnValue(guest)
+    browserManager.attachGuestPolicies(guest as never)
+    browserManager.registerGuest({
+      browserPageId: 'tab-metrics-failed',
+      webContentsId: guest.id as number,
+      rendererWebContentsId
+    })
+    const renderer = { isDestroyed: vi.fn(() => false), send: vi.fn() }
+    mocks.webContentsFromIdMock.mockImplementation((id: number) =>
+      id === rendererWebContentsId ? renderer : guest
+    )
+
+    await expect(browserManager.setViewportOverride('tab-metrics-failed', OVERRIDE)).resolves.toBe(
+      false
+    )
+    browserManager.setViewportScrollState('tab-metrics-failed', rendererWebContentsId, {
+      scrollLeft: 0,
+      scrollTop: 0,
+      maxScrollLeft: 400,
+      maxScrollTop: 300
+    })
+
+    const beforeMouseEvent = mocks.guestOnMock.mock.calls.findLast(
+      ([event]) => event === 'before-mouse-event'
+    )?.[1] as ((event: Electron.Event, mouse: Electron.MouseInputEvent) => void) | undefined
+    expect(beforeMouseEvent).toBeDefined()
+    const preventDefault = vi.fn()
+    beforeMouseEvent?.(
+      { preventDefault } as unknown as Electron.Event,
+      {
+        type: 'mouseWheel',
+        x: 0,
+        y: 0,
+        modifiers: [],
+        deltaX: 0,
+        deltaY: 120
+      } as Electron.MouseWheelInputEvent
+    )
+
+    expect(preventDefault).toHaveBeenCalledTimes(1)
+    expect(renderer.send).toHaveBeenCalledWith('ui:scrollBrowserPage', {
+      browserPageId: 'tab-metrics-failed',
+      deltaX: 0,
+      deltaY: 120
+    })
   })
 })

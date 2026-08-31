@@ -265,8 +265,8 @@ export class BrowserManager {
   // Why: presence means the preset requires a CDP UA override (installed or in flight), so navigation
   // can re-issue it against the target URL's identity.
   private readonly viewportUaOverrideMobileByTabId = new Map<string, boolean>()
-  // Why: host-side wheel panning is only valid while a local emulated viewport is active on
-  // the guest that owns this tab; replacement guests must not inherit a retired guest's state.
+  // Why: host-side wheel panning follows the requested local viewport on the owning guest;
+  // replacement guests must not inherit a retired guest's state.
   private readonly viewportPresetActiveByTabId = new Map<
     string,
     { guestWebContentsId: number; active: boolean }
@@ -1937,6 +1937,14 @@ export class BrowserManager {
   ): Promise<boolean> {
     // Why: chain per-tab so rapid toggles don't interleave CDP commands and the last-requested override wins.
     const expectedWebContentsId = this.webContentsIdByTabId.get(browserTabId)
+    if (expectedWebContentsId !== undefined) {
+      // Keep host panning available while CDP applies the requested dimensions. The guest id fence
+      // prevents this intent from leaking to a replacement guest; clearing the preset removes it.
+      this.viewportPresetActiveByTabId.set(browserTabId, {
+        guestWebContentsId: expectedWebContentsId,
+        active: override !== null
+      })
+    }
     // The renderer resizes the host before CDP completes; discard the old geometry until it
     // reports the new pane bounds so a pending preset cannot route wheel input using stale limits.
     this.viewportScrollStateByTabId.delete(browserTabId)

@@ -6,7 +6,8 @@ import {
 
 export function useBrowserPageViewportScrollReporting(
   browserPageId: string,
-  scroller: HTMLDivElement | null
+  scroller: HTMLDivElement | null,
+  viewportPresetId: string | null
 ): void {
   useEffect(() => {
     let reportFrame: number | null = null
@@ -45,5 +46,5 @@ export function useBrowserPageViewportScrollReporting(
         cancelAnimationFrame(reportFrame)
       }
     }
-  }, [browserPageId, scroller])
+  }, [browserPageId, scroller, viewportPresetId])
 }
