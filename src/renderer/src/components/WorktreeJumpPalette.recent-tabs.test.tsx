@@ -63,7 +63,6 @@ vi.mock('@/components/ui/command', async () => {
       open?: boolean
       commandProps?: { value?: string; onValueChange?: (next: string) => void }
     }) => {
-      _setCommandSelection = commandProps?.onValueChange ?? null
       return open ? (
         <div data-command-dialog="true" data-command-value={commandProps?.value ?? ''}>
           {children}
@@ -79,7 +78,6 @@ vi.mock('@/components/ui/command', async () => {
       onValueChange?: (next: string) => void
       placeholder?: string
     }) => {
-      _setCommandQuery = onValueChange ?? null
       return (
         <input
           data-command-input="true"
@@ -120,8 +118,6 @@ vi.mock('@/components/ui/command', async () => {
 const initialAppState = useAppStore.getInitialState()
 let testRoot: Root
 let testContainer: HTMLDivElement
-let _setCommandQuery: ((next: string) => void) | null = null
-let _setCommandSelection: ((next: string) => void) | null = null
 async function flushEffects(): Promise<void> {
   await act(async () => {
     await Promise.resolve()
@@ -180,8 +176,6 @@ function clickSeeMore(): void {
 describe('WorktreeJumpPalette recent chats & terminals', () => {
   beforeEach(() => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
-    setCommandQuery = null
-    setCommandSelection = null
     activateWorkspaceTabPaletteResult.mockClear()
     useAppStore.setState(initialAppState, true)
     testContainer = document.createElement('div')
