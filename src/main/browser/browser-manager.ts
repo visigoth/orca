@@ -264,6 +264,8 @@ export class BrowserManager {
   // Why: presence means the preset requires a CDP UA override (installed or in flight), so navigation
   // can re-issue it against the target URL's identity.
   private readonly viewportUaOverrideMobileByTabId = new Map<string, boolean>()
+  // Why: host-side wheel panning is only valid while a local emulated viewport is active.
+  private readonly viewportPresetActiveByTabId = new Map<string, boolean>()
   // Why: the confirmed CDP identity outranks getUserAgent; pending intent keeps rapid navigations
   // ordered without claiming a failed write was installed.
   private readonly authUserAgentOverrideStateByGuestId = new Map<
@@ -1479,6 +1481,7 @@ export class BrowserManager {
     // Why: drop the viewport-op chain so the Map doesn't retain a promise keyed to a destroyed guest.
     this.viewportOpsByTabId.delete(browserTabId)
     this.viewportUaOverrideMobileByTabId.delete(browserTabId)
+    this.viewportPresetActiveByTabId.delete(browserTabId)
     if (wcId !== undefined) {
       this.pendingNavigationByGuestId.delete(wcId)
     }
@@ -1555,6 +1558,7 @@ export class BrowserManager {
     this.sessionProfileIdByPageId.clear()
     this.userAgentModeByPageId.clear()
     this.viewportUaOverrideMobileByTabId.clear()
+    this.viewportPresetActiveByTabId.clear()
     this.authUserAgentOverrideStateByGuestId.clear()
     this.pendingNavigationByGuestId.clear()
     this.pendingLoadFailuresByGuestId.clear()
@@ -2037,6 +2041,7 @@ export class BrowserManager {
           throw error
         }
       }
+      this.viewportPresetActiveByTabId.set(browserTabId, override !== null)
       return true
     } catch {
       return false
@@ -2223,7 +2228,8 @@ export class BrowserManager {
         browserTabId,
         guest,
         resolveRenderer: (tabId) =>
-          resolveRendererWebContents(this.rendererWebContentsIdByTabId, tabId)
+          resolveRendererWebContents(this.rendererWebContentsIdByTabId, tabId),
+        isViewportPresetActive: () => this.viewportPresetActiveByTabId.get(browserTabId) === true
       })
     )
   }
