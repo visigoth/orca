@@ -4,9 +4,11 @@ import {
   resolveAutomationWorkspaceProvenance
 } from '../../../automations/workspace-provenance'
 import { buildCliWorkspaceProvenance } from '../../../../shared/cli-workspace-provenance'
+import type { ExecutionHostId } from '../../../../shared/execution-host'
 import { defineMethod, type RpcMethod } from '../core'
 import { buildManagedWorktreeCreateArgs } from './worktree-create-args'
 import { resolvePairedCallerHostId } from './paired-caller-host-id'
+import { tearDownEphemeralVmForWorkspace } from './ephemeral-vm-teardown'
 import { resolveRuntimeNavigationTarget } from '../../../../shared/runtime-navigation'
 import { resolveRpcWorkspaceCreatorProvenance } from '../workspace-creator-context'
 import { WorktreeCreate, WorktreePrefetchCreateBase } from './worktree-create-schemas'
@@ -236,7 +238,20 @@ export const WORKTREE_METHODS: RpcMethod[] = [
         params.runHooks === true,
         params.allowUnverifiedPtyStop === true
       ] as const
+      // Capture the workspace identity BEFORE removal: afterwards the worktree row is gone and
+      // there is nothing left to match a provisioned environment against.
+      const removed = await runtime.showManagedWorktree(params.worktree).catch(() => null)
       const result = await runtime.removeManagedWorktree(...removalArgs, resolvedHostId)
+      // Why here and not in OrcaRuntimeService: that module deliberately imports only a TYPE
+      // from electron, and teardown needs app.getPath('userData'). This is also the exact path
+      // headless and web clients delete through — the desktop renderer runs its own equivalent
+      // over IPC, so wiring it here does not double up on that flow.
+      if (removed?.id) {
+        await tearDownEphemeralVmForWorkspace({
+          workspaceId: removed.id,
+          ...(resolvedHostId ? { executionHostId: resolvedHostId as ExecutionHostId } : {})
+        })
+      }
       return { removed: true, ...result }
     }
   }),

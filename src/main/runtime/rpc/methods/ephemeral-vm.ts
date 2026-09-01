@@ -48,6 +48,15 @@ export function setEphemeralVmDepsForRpc(
   pluginServiceForRpc = pluginService ?? null
 }
 
+/**
+ * The injected Store, or null. Deliberately NON-throwing, unlike requireStore(): the deletion
+ * paths use it for best-effort teardown, and a runtime without the store injected must still be
+ * able to delete a workspace. Throwing here would turn a successful delete into a failed one.
+ */
+export function getEphemeralVmStore(): Store | null {
+  return storeForRpc
+}
+
 function requireStore(): Store {
   if (!storeForRpc) {
     throw new Error('Environment recipes are not available on this runtime')
