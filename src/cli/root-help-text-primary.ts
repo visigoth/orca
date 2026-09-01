@@ -39,6 +39,8 @@ export const ROOT_HELP_TEXT_PRIMARY = [
   '  plugin list               List plugins installed on this runtime',
   '  plugin approve            Review and approve a plugin so it becomes active',
   '  vm recipe list            List environment recipes available for a repo',
+  '  vm runtime list           List environments provisioned by recipes',
+  '  vm runtime cleanup        Tear down a provisioned environment',
   '  vm recipe doctor          Validate a per-workspace environment recipe',
   '',
   'Automations:',

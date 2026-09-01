@@ -68,6 +68,8 @@ const VmListRecipes = z.object({
   repo: requiredString('Missing repo selector')
 })
 
+const VmRuntimeId = z.object({ runtimeId: requiredString('Missing runtime id') })
+
 const VmAttachWorkspace = z.object({
   runtimeId: requiredString('Missing runtime id'),
   workspaceId: requiredString('Missing workspace id')
@@ -99,6 +101,36 @@ export const EPHEMERAL_VM_METHODS = [
         userDataPath: app.getPath('userData'),
         runtimeId: params.runtimeId,
         workspaceId: params.workspaceId
+      })
+    }
+  }),
+  defineMethod({
+    // Why: listing and cleaning provisioned runtimes was IPC-only, so a headless host could see
+    // neither what it had provisioned nor tear any of it down. A failed create leaves a runtime
+    // behind by design (its SSH target stays registered so it can be retried or released), and
+    // without these it stays behind forever.
+    name: 'vm.listRuntimes',
+    params: null,
+    handler: async () => {
+      const [{ app }, { listEphemeralVmRuntimes }] = await Promise.all([
+        import('electron'),
+        import('../../../../shared/ephemeral-vm-runtime-store')
+      ])
+      return listEphemeralVmRuntimes(app.getPath('userData'))
+    }
+  }),
+  defineMethod({
+    name: 'vm.cleanup',
+    params: VmRuntimeId,
+    handler: async (params) => {
+      const [{ app }, { cleanupEphemeralVmRuntimeById }] = await Promise.all([
+        import('electron'),
+        import('../../../ephemeral-vm-cleanup')
+      ])
+      return cleanupEphemeralVmRuntimeById({
+        store: requireStore(),
+        userDataPath: app.getPath('userData'),
+        runtimeId: params.runtimeId
       })
     }
   }),

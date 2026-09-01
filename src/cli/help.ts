@@ -176,6 +176,7 @@ export function formatFlagHelp(flag: string): string {
     'base-branch': '--base-branch <ref>    Base branch/ref to create the worktree from',
     recipe: '--recipe <id>         Provision a per-workspace environment recipe and create there',
     plugin: '--plugin <key>        Plugin key, as shown by `orca plugin list`',
+    runtime: '--runtime <id>        Provisioned environment id, from `orca vm runtime list`',
     decision: '--decision <choice>   approve (default) or keep-disabled',
     disable: '--disable             Disable instead of enable',
     command: '--command <text>       Command to run in the terminal on startup',

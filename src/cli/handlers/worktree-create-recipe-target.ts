@@ -58,6 +58,25 @@ export async function provisionRecipeTarget(
  *
  * Non-fatal by design: the workspace exists either way, and failing here would strand it.
  */
+/**
+ * Provision a recipe (if one was asked for) and return the repo selector the workspace should be
+ * created against — the provisioned repo when a recipe ran, the caller's own selector otherwise.
+ */
+export async function resolveRecipeCreateRepo(
+  flags: Map<string, string | boolean>,
+  fallbackRepoSelector: string,
+  name: string,
+  client: Parameters<CommandHandler>[0]['client']
+): Promise<{ repoSelector: string; provisioned: ProvisionedRecipeTarget | null }> {
+  if (!flags.has('recipe')) {
+    return { repoSelector: fallbackRepoSelector, provisioned: null }
+  }
+  const provisioned = await provisionRecipeTarget(flags, fallbackRepoSelector, name, client)
+  // Creating against the SOURCE repo would put the agent back on the Orca host, which is the
+  // failure --recipe exists to prevent.
+  return { repoSelector: `id:${provisioned.repoId}`, provisioned }
+}
+
 export async function attachRecipeRuntimeToWorkspace(
   client: Parameters<CommandHandler>[0]['client'],
   provisioned: ProvisionedRecipeTarget | null,
