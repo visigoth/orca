@@ -123,15 +123,31 @@ export const EPHEMERAL_VM_METHODS = [
     name: 'vm.cleanup',
     params: VmRuntimeId,
     handler: async (params) => {
-      const [{ app }, { cleanupEphemeralVmRuntimeById }] = await Promise.all([
-        import('electron'),
-        import('../../../ephemeral-vm-cleanup')
-      ])
-      return cleanupEphemeralVmRuntimeById({
+      const [{ app }, { cleanupEphemeralVmRuntimeById }, { purgeOrphanedRuntimeSshProjects }] =
+        await Promise.all([
+          import('electron'),
+          import('../../../ephemeral-vm-cleanup'),
+          import('../../../ephemeral-vm-orphaned-project-purge')
+        ])
+      const userDataPath = app.getPath('userData')
+      // Capture the target BEFORE cleanup: afterwards the record no longer names it, and the
+      // project rows pinned to it could not be found.
+      const { listEphemeralVmRuntimes } =
+        await import('../../../../shared/ephemeral-vm-runtime-store')
+      const targetBefore = listEphemeralVmRuntimes(userDataPath).find(
+        (entry) => entry.id === params.runtimeId
+      )?.sshTargetId
+      const cleaned = await cleanupEphemeralVmRuntimeById({
         store: requireStore(),
-        userDataPath: app.getPath('userData'),
+        userDataPath,
         runtimeId: params.runtimeId
       })
+      // A manual cleanup must leave no dead project either, same as the deletion path. The target
+      // counts as destroyed only when cleanup actually released it.
+      if (targetBefore && !cleaned.sshTargetId) {
+        purgeOrphanedRuntimeSshProjects(requireStore(), [targetBefore])
+      }
+      return cleaned
     }
   }),
   defineMethod({

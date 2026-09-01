@@ -9,6 +9,7 @@ import {
 } from '../shared/execution-host'
 import { composeWorktreeHostIdentity } from '../shared/worktree/host-qualified-identity'
 import { cleanupEphemeralVmRuntimeById } from './ephemeral-vm-cleanup'
+import { purgeOrphanedRuntimeSshProjects } from './ephemeral-vm-orphaned-project-purge'
 
 /**
  * Tear down the ephemeral-VM runtimes behind deleted workspaces, on the MAIN side.
@@ -120,8 +121,18 @@ export async function cleanupEphemeralVmRuntimesForDeleted(args: {
       }
     }
   }
-  return {
+  const summary = {
     destroyedSshTargetIds: [...destroyedSshTargetIds],
     retainedSshTargetIds: [...retainedSshTargetIds]
   }
+  // The summary exists so callers purge only CONFIRMED-destroyed targets; doing it here means
+  // every caller gets it rather than each remembering to. A project left pinned to a destroyed
+  // target is not merely clutter — duplicates of the same repo make `name:` selectors ambiguous
+  // and break the next workspace.
+  try {
+    purgeOrphanedRuntimeSshProjects(args.store, summary.destroyedSshTargetIds)
+  } catch (error) {
+    console.error('[ephemeral-vm] orphaned project purge failed:', error)
+  }
+  return summary
 }
