@@ -43,6 +43,18 @@ export const CORE_COMMAND_SPECS: CommandSpec[] = [
     allowedFlags: [...GLOBAL_FLAGS, 'path']
   },
   {
+    path: ['repo', 'rm'],
+    summary: 'Unregister a repo from Orca',
+    usage: 'orca repo rm --repo <selector> [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'repo'],
+    notes: [
+      'Unregisters only — the checkout on disk is left alone.',
+      "Also tears down a per-workspace environment pinned to this repo, since an SSH-mode environment's project is hosted on its runtime-owned SSH target.",
+      'Use id:<repo-id> when several rows share a name, which happens while per-workspace environments are registered for the same repo.'
+    ],
+    examples: ['orca repo rm --repo id:00854c8e-389a-4303-8bca-426ec0b979d7']
+  },
+  {
     path: ['repo', 'show'],
     summary: 'Show one registered repo',
     usage: 'orca repo show --repo <selector> [--json]',
