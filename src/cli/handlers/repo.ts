@@ -9,6 +9,16 @@ export const REPO_HANDLERS: Record<string, CommandHandler> = {
     const result = await client.call<RuntimeRepoList>('repo.list')
     printResult(result, json, formatRepoList)
   },
+  'repo rm': async ({ flags, client, json }) => {
+    const repo = getRequiredStringFlag(flags, 'repo')
+    const result = await client.call<{ removed: true }>('repo.rm', { repo })
+    if (json) {
+      console.log(JSON.stringify(result.result, null, 2))
+      return
+    }
+    console.log(`removed ${repo}`)
+  },
+
   'repo add': async ({ flags, client, cwd, json }) => {
     const repoPath = getRequiredStringFlag(flags, 'path')
     const result = await client.call<{ repo: Record<string, unknown> }>('repo.add', {
