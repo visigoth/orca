@@ -68,6 +68,11 @@ const VmListRecipes = z.object({
   repo: requiredString('Missing repo selector')
 })
 
+const VmAttachWorkspace = z.object({
+  runtimeId: requiredString('Missing runtime id'),
+  workspaceId: requiredString('Missing workspace id')
+})
+
 const VmProvisionWorkspaceTarget = z.object({
   repo: requiredString('Missing repo selector'),
   recipeId: requiredString('Missing recipe id'),
@@ -78,6 +83,25 @@ const VmProvisionWorkspaceTarget = z.object({
 })
 
 export const EPHEMERAL_VM_METHODS = [
+  defineMethod({
+    // Why this exists: provisioning happens BEFORE the workspace, so the runtime record starts
+    // with no workspaceId. The desktop binds them afterwards over IPC; without the same step the
+    // record stays unattached and deletion can never match it — the environment then survives
+    // every workspace it was created for.
+    name: 'vm.attachWorkspace',
+    params: VmAttachWorkspace,
+    handler: async (params) => {
+      const [{ app }, { attachEphemeralVmRuntimeToWorkspace }] = await Promise.all([
+        import('electron'),
+        import('../../../ephemeral-vm-runtime-attachment')
+      ])
+      return attachEphemeralVmRuntimeToWorkspace({
+        userDataPath: app.getPath('userData'),
+        runtimeId: params.runtimeId,
+        workspaceId: params.workspaceId
+      })
+    }
+  }),
   defineMethod({
     name: 'vm.listRecipes',
     params: VmListRecipes,
