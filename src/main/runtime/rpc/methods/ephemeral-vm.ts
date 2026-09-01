@@ -1,17 +1,12 @@
 import { z } from 'zod'
 import { defineMethod } from '../core'
 import { requiredString } from '../schemas'
-import type { Store } from '../../../persistence'
-import type { PluginService } from '../../../plugins/plugin-service'
+import { getEphemeralVmHost, type EphemeralVmHost } from '../../../../shared/ephemeral-vm-host'
 import {
   getEphemeralVmRecipeResultCheckoutMode,
   getEphemeralVmRecipeResultProjectRoot
 } from '../../../../shared/ephemeral-vm-recipes'
-import {
-  parseExecutionHostId,
-  toRuntimeExecutionHostId,
-  toSshExecutionHostId
-} from '../../../../shared/execution-host'
+import { toRuntimeExecutionHostId, toSshExecutionHostId } from '../../../../shared/execution-host'
 import { getProjectIdentityKey } from '../../../../shared/project-host-setup-projection'
 
 /**
@@ -20,13 +15,14 @@ import { getProjectIdentityKey } from '../../../../shared/project-host-setup-pro
  * The recipe surface was previously Electron IPC only, so it was reachable from the app window
  * and nowhere else. `orca worktree create` therefore had no way to ask for a workspace on a
  * recipe-provisioned environment, and a scripted workspace silently ran on the Orca host instead
- * — which is exactly where an agent should not be when the host holds privileged sockets. These
- * methods expose the operations the composer already uses so the CLI can offer the same choice.
+ * — which is exactly where an agent should not be when the host holds privileged sockets.
  *
- * The provisioning and repo-registration modules are imported lazily inside the handlers rather
- * than at module load. They reach into the SSH stack, and this module is registered from the RPC
- * method index that many suites import -- pulling that graph in eagerly broke unrelated ssh tests
- * whose mocks do not cover it, and it is startup work a runtime without recipes never needs.
+ * Everything the work actually needs — provisioning, SSH-backed registration, teardown — arrives
+ * through the EphemeralVmHost port rather than being imported. That is not stylistic: those
+ * facilities reach `electron` and, through the SSH IPC layer, the browser stack and
+ * `node:sqlite`. The runtime must stay bootable on plain Node (`pnpm run build:orcad`), and the
+ * ratchet measures REACHABILITY, so even a dynamic `import()` here would pull the whole subgraph
+ * into the runtime's bundle.
  *
  * `vm.provisionWorkspaceTarget` deliberately does provision-then-register in ONE call. The
  * renderer runs those as two steps because it drives a progress UI between them; a CLI caller has
@@ -34,34 +30,12 @@ import { getProjectIdentityKey } from '../../../../shared/project-host-setup-pro
  * failed or the client died in between.
  */
 
-// Why: RpcContext carries only the OrcaRuntimeService, while provisioning needs the settings
-// Store and the plugin registry. Injected by the composition root via setter, matching how
-// methods/plugins.ts reaches the PluginService, rather than widening the shared context type.
-let storeForRpc: Store | null = null
-let pluginServiceForRpc: PluginService | null = null
-
-export function setEphemeralVmDepsForRpc(
-  store: Store | null,
-  pluginService?: PluginService | null
-): void {
-  storeForRpc = store
-  pluginServiceForRpc = pluginService ?? null
-}
-
-/**
- * The injected Store, or null. Deliberately NON-throwing, unlike requireStore(): the deletion
- * paths use it for best-effort teardown, and a runtime without the store injected must still be
- * able to delete a workspace. Throwing here would turn a successful delete into a failed one.
- */
-export function getEphemeralVmStore(): Store | null {
-  return storeForRpc
-}
-
-function requireStore(): Store {
-  if (!storeForRpc) {
+function requireHost(): EphemeralVmHost {
+  const host = getEphemeralVmHost()
+  if (!host) {
     throw new Error('Environment recipes are not available on this runtime')
   }
-  return storeForRpc
+  return host
 }
 
 const VmListRecipes = z.object({
@@ -86,104 +60,54 @@ const VmProvisionWorkspaceTarget = z.object({
 
 export const EPHEMERAL_VM_METHODS = [
   defineMethod({
+    // Why: listing and cleaning provisioned runtimes was IPC-only, so a headless host could see
+    // neither what it had provisioned nor tear any of it down. A create that fails partway leaves
+    // a runtime behind by design — its SSH target stays registered so it can be retried or
+    // released — and without these it stays behind forever.
+    name: 'vm.listRuntimes',
+    params: null,
+    handler: async () => requireHost().listRuntimes()
+  }),
+  defineMethod({
+    name: 'vm.cleanup',
+    params: VmRuntimeId,
+    handler: async (params) => requireHost().cleanupRuntime(params.runtimeId)
+  }),
+  defineMethod({
     // Why this exists: provisioning happens BEFORE the workspace, so the runtime record starts
     // with no workspaceId. The desktop binds them afterwards over IPC; without the same step the
     // record stays unattached and deletion can never match it — the environment then survives
     // every workspace it was created for.
     name: 'vm.attachWorkspace',
     params: VmAttachWorkspace,
-    handler: async (params) => {
-      const [{ app }, { attachEphemeralVmRuntimeToWorkspace }] = await Promise.all([
-        import('electron'),
-        import('../../../ephemeral-vm-runtime-attachment')
-      ])
-      return attachEphemeralVmRuntimeToWorkspace({
-        userDataPath: app.getPath('userData'),
+    handler: async (params) =>
+      requireHost().attachWorkspace({
         runtimeId: params.runtimeId,
         workspaceId: params.workspaceId
       })
-    }
-  }),
-  defineMethod({
-    // Why: listing and cleaning provisioned runtimes was IPC-only, so a headless host could see
-    // neither what it had provisioned nor tear any of it down. A failed create leaves a runtime
-    // behind by design (its SSH target stays registered so it can be retried or released), and
-    // without these it stays behind forever.
-    name: 'vm.listRuntimes',
-    params: null,
-    handler: async () => {
-      const [{ app }, { listEphemeralVmRuntimes }] = await Promise.all([
-        import('electron'),
-        import('../../../../shared/ephemeral-vm-runtime-store')
-      ])
-      return listEphemeralVmRuntimes(app.getPath('userData'))
-    }
-  }),
-  defineMethod({
-    name: 'vm.cleanup',
-    params: VmRuntimeId,
-    handler: async (params) => {
-      const [{ app }, { cleanupEphemeralVmRuntimeById }, { purgeOrphanedRuntimeSshProjects }] =
-        await Promise.all([
-          import('electron'),
-          import('../../../ephemeral-vm-cleanup'),
-          import('../../../ephemeral-vm-orphaned-project-purge')
-        ])
-      const userDataPath = app.getPath('userData')
-      // Capture the target BEFORE cleanup: afterwards the record no longer names it, and the
-      // project rows pinned to it could not be found.
-      const { listEphemeralVmRuntimes } =
-        await import('../../../../shared/ephemeral-vm-runtime-store')
-      const targetBefore = listEphemeralVmRuntimes(userDataPath).find(
-        (entry) => entry.id === params.runtimeId
-      )?.sshTargetId
-      const cleaned = await cleanupEphemeralVmRuntimeById({
-        store: requireStore(),
-        userDataPath,
-        runtimeId: params.runtimeId
-      })
-      // A manual cleanup must leave no dead project either, same as the deletion path. The target
-      // counts as destroyed only when cleanup actually released it.
-      if (targetBefore && !cleaned.sshTargetId) {
-        purgeOrphanedRuntimeSshProjects(requireStore(), [targetBefore])
-      }
-      return cleaned
-    }
   }),
   defineMethod({
     name: 'vm.listRecipes',
     params: VmListRecipes,
     handler: async (params, { runtime }) => {
-      const [{ listRecipes }, { getApprovedPluginVmRecipes }] = await Promise.all([
-        import('../../../ipc/ephemeral-vm-recipe-context'),
-        import('../../../plugins/plugin-approved-vm-recipes')
-      ])
       const repo = await runtime.showRepo(params.repo)
-      return listRecipes(
-        requireStore(),
-        repo.id,
-        await getApprovedPluginVmRecipes(pluginServiceForRpc ?? undefined)
-      )
+      return requireHost().listRecipes(repo.id)
     }
   }),
   defineMethod({
     name: 'vm.provisionWorkspaceTarget',
     params: VmProvisionWorkspaceTarget,
     handler: async (params, { runtime }) => {
-      const { provisionEphemeralVmForRepo } = await import('../../../ephemeral-vm-provision-core')
+      const host = requireHost()
       const repo = await runtime.showRepo(params.repo)
-      const provisioned = await provisionEphemeralVmForRepo(
-        requireStore(),
-        pluginServiceForRpc ?? undefined,
-        {
-          repoId: repo.id,
-          recipeId: params.recipeId,
-          ...(params.workspaceName ? { workspaceName: params.workspaceName } : {}),
-          ...(params.projectId ? { projectId: params.projectId } : {}),
-          ...(params.branch ? { branch: params.branch } : {}),
-          ...(params.ref ? { ref: params.ref } : {})
-        }
-      )
+      const provisioned = await host.provision({
+        repoId: repo.id,
+        recipeId: params.recipeId,
+        ...(params.workspaceName ? { workspaceName: params.workspaceName } : {}),
+        ...(params.projectId ? { projectId: params.projectId } : {}),
+        ...(params.branch ? { branch: params.branch } : {}),
+        ...(params.ref ? { ref: params.ref } : {})
+      })
       if (!provisioned.ok) {
         // Why: carry the recipe's own stderr. A create script fails for reasons only its output
         // explains — a missing image, an unreachable provider — and without it the caller gets a
@@ -195,83 +119,60 @@ export const EPHEMERAL_VM_METHODS = [
         )
       }
 
-      const checkoutMode = getEphemeralVmRecipeResultCheckoutMode(provisioned.runtime.recipeResult)
+      const checkoutMode = getEphemeralVmRecipeResultCheckoutMode(provisioned.recipeResult)
       const hostId =
         provisioned.connectionType === 'ssh'
-          ? toSshExecutionHostId(provisioned.sshTargetId)
-          : toRuntimeExecutionHostId(provisioned.environment.id)
+          ? toSshExecutionHostId(provisioned.sshTargetId ?? '')
+          : toRuntimeExecutionHostId(provisioned.environmentId ?? '')
 
-      // Registering the environment's checkout as a project host setup is what makes it a valid
-      // target for worktree.create. Mirrors prepareEphemeralVmWorkspaceTarget in the renderer.
-      //
-      // projectId is required. The renderer gates on a github: key to preserve behaviour for
-      // portable projects, but a CLI caller always needs *some* id, and the shared identity key
-      // is the canonical one — falling back to git:/repo: rather than inventing a value.
+      // projectId is required downstream. The renderer gates on a github: key to preserve
+      // behaviour for portable projects, but a CLI caller always needs *some* id, and the shared
+      // identity key is the canonical one — falling back to git:/repo: rather than inventing one.
       const projectId = params.projectId ?? getProjectIdentityKey(repo)
-      const projectRoot = getEphemeralVmRecipeResultProjectRoot(provisioned.runtime.recipeResult)
+      const projectRoot = getEphemeralVmRecipeResultProjectRoot(provisioned.recipeResult)
 
-      // An ssh: host cannot go through runtime.setupProjectExistingFolder: that path uses the
-      // LOCAL git and filesystem providers, so it would probe this machine and register the
-      // result as remote — which is why it refuses ssh: hosts outright. Registration over SSH
-      // goes through the same helper the desktop uses, against the SSH providers that the relay
-      // brought up when it connected above.
-      let setup
-      if (parseExecutionHostId(hostId)?.kind === 'ssh') {
-        const [
-          { addRemoteRepoFromPath },
-          { alignRepoWithRequestedProject },
-          { invalidateAuthorizedRootsCache }
-        ] = await Promise.all([
-          import('../../../ipc/repos/remote-repo-registration'),
-          import('../../../ipc/repos/project-host-setup-handlers'),
-          import('../../../ipc/registered-worktree-roots-cache')
-        ])
-        const registered = await addRemoteRepoFromPath(requireStore(), {
-          connectionId: provisioned.connectionType === 'ssh' ? provisioned.sshTargetId : '',
-          remotePath: projectRoot,
-          setupMethod: 'imported-existing-folder'
+      // An ssh: host goes through the port, because registering it needs the SSH providers and
+      // the local-provider RPC below refuses ssh: hosts by design. A runtime: host is local to
+      // this process and uses the ordinary path.
+      let repoId: string
+      let projectHostSetupId: string
+      let resolvedProjectId: string
+      let path: string
+      if (provisioned.connectionType === 'ssh') {
+        const registered = await host.registerProvisionedRepo({
+          hostId,
+          projectId,
+          path: projectRoot,
+          ...(provisioned.sshTargetId ? { sshTargetId: provisioned.sshTargetId } : {})
         })
-        if ('error' in registered) {
+        if (!registered.ok) {
           throw new Error(registered.error)
         }
-        try {
-          setup = alignRepoWithRequestedProject(
-            requireStore(),
-            registered.repo,
-            projectId,
-            'imported-existing-folder'
-          )
-        } catch (error) {
-          // Why: an import that cannot be linked must not leave a repo registration or an
-          // authorization root behind — same cleanup the desktop handler performs.
-          if (!registered.alreadyExisted) {
-            requireStore().removeProject(registered.repo.id)
-          }
-          invalidateAuthorizedRootsCache()
-          throw error
-        }
-        invalidateAuthorizedRootsCache()
+        ;({ repoId, projectHostSetupId, path } = registered)
+        resolvedProjectId = registered.projectId
       } else {
-        setup = await runtime.setupProjectExistingFolder({
+        const setup = await runtime.setupProjectExistingFolder({
           projectId,
           hostId,
           path: projectRoot,
           setupMethod: 'imported-existing-folder'
         })
+        repoId = setup.repo.id
+        projectHostSetupId = setup.setup.id
+        resolvedProjectId = setup.project.id
+        path = setup.repo.path
       }
 
       return {
-        runtimeId: provisioned.runtime.id,
+        runtimeId: provisioned.runtimeId,
         connectionType: provisioned.connectionType,
         checkoutMode,
         hostId,
-        projectHostSetupId: setup.setup.id,
-        repoId: setup.repo.id,
-        projectId: setup.project.id,
-        path: setup.repo.path,
-        ...(provisioned.connectionType === 'ssh' && provisioned.expectedRefHead
-          ? { expectedRefHead: provisioned.expectedRefHead }
-          : {}),
+        projectHostSetupId,
+        repoId,
+        projectId: resolvedProjectId,
+        path,
+        ...(provisioned.expectedRefHead ? { expectedRefHead: provisioned.expectedRefHead } : {}),
         warnings: provisioned.warnings
       }
     }

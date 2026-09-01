@@ -1,4 +1,4 @@
-import { app } from 'electron'
+import { getAppEnvironment } from '../shared/app-environment'
 import type { Store } from './persistence'
 import { listEphemeralVmRuntimes } from '../shared/ephemeral-vm-runtime-store'
 import {
@@ -50,7 +50,7 @@ export async function cleanupEphemeralVmRuntimesForDeleted(args: {
 }): Promise<EphemeralVmCleanupSummary> {
   const destroyedSshTargetIds = new Set<string>()
   const retainedSshTargetIds = new Set<string>()
-  const userDataPath = app.getPath('userData')
+  const userDataPath = getAppEnvironment().getPath('userData')
   try {
     const workspaceIdSet = new Set(args.workspaceIds ?? [])
     const sshTargetIdSet = new Set(

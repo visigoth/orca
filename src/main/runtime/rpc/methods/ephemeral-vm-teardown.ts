@@ -1,4 +1,5 @@
 import type { ExecutionHostId } from '../../../../shared/execution-host'
+import { getEphemeralVmHost } from '../../../../shared/ephemeral-vm-host'
 
 /**
  * Best-effort teardown of the ephemeral-VM runtime behind a deleted workspace or project.
@@ -14,9 +15,10 @@ import type { ExecutionHostId } from '../../../../shared/execution-host'
  *     failure must be logged, not raised; raising would report a successful delete as a failure.
  *     That is not hypothetical — an earlier version threw when the store was not injected and
  *     broke worktree.rm outright.
- *   - The cleanup module is imported lazily. It reaches into the SSH stack, and importing it
- *     eagerly drags that graph into every suite importing these RPC methods, breaking unrelated
- *     tests whose mocks do not cover it.
+ *   - Cleanup arrives through the EphemeralVmHost port rather than an import. It reaches the SSH
+ *     stack, and the runtime must stay bootable on plain Node; the ratchet measures reachability,
+ *     so even a dynamic import() would pull that subgraph into the runtime bundle. A host with no
+ *     port installed simply has nothing to tear down.
  */
 
 export async function tearDownEphemeralVmForWorkspace(args: {
@@ -24,16 +26,11 @@ export async function tearDownEphemeralVmForWorkspace(args: {
   executionHostId?: ExecutionHostId
 }): Promise<void> {
   try {
-    const [{ cleanupEphemeralVmRuntimesForDeleted }, { getEphemeralVmStore }] = await Promise.all([
-      import('../../../ephemeral-vm-cleanup-for-deleted'),
-      import('./ephemeral-vm')
-    ])
-    const store = getEphemeralVmStore()
-    if (!store) {
+    const host = getEphemeralVmHost()
+    if (!host) {
       return
     }
-    await cleanupEphemeralVmRuntimesForDeleted({
-      store,
+    await host.cleanupForDeleted({
       workspaceIds: [args.workspaceId],
       // Host-scoped so a same-id workspace on another host is not torn down alongside it.
       ...(args.executionHostId
@@ -51,15 +48,11 @@ export async function tearDownEphemeralVmForWorkspace(args: {
 
 export async function tearDownEphemeralVmForSshTarget(connectionId: string): Promise<void> {
   try {
-    const [{ cleanupEphemeralVmRuntimesForDeleted }, { getEphemeralVmStore }] = await Promise.all([
-      import('../../../ephemeral-vm-cleanup-for-deleted'),
-      import('./ephemeral-vm')
-    ])
-    const store = getEphemeralVmStore()
-    if (!store) {
+    const host = getEphemeralVmHost()
+    if (!host) {
       return
     }
-    await cleanupEphemeralVmRuntimesForDeleted({ store, runtimeOwnedSshTargetIds: [connectionId] })
+    await host.cleanupForDeleted({ runtimeOwnedSshTargetIds: [connectionId] })
   } catch (error) {
     console.error('[ephemeral-vm] teardown after project removal failed:', error)
   }

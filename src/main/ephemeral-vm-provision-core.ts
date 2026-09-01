@@ -1,4 +1,4 @@
-import { app } from 'electron'
+import { getAppEnvironment } from '../shared/app-environment'
 import type { Store } from './persistence'
 import { getEphemeralVmRecipeResultConnection } from '../shared/ephemeral-vm-recipes'
 import {
@@ -123,7 +123,7 @@ export async function provisionEphemeralVmForRepo(
   }
   const repoUrl = getProvisionedRootRecipeRepoUrl(recipe.checkoutMode, recipeRepoUrl)
   const result = await provisionEphemeralVmRuntime({
-    userDataPath: app.getPath('userData'),
+    userDataPath: getAppEnvironment().getPath('userData'),
     repoPath: repo.repo.path,
     repoId: repo.repo.id,
     recipe,
@@ -155,9 +155,13 @@ export async function provisionEphemeralVmForRepo(
         connection,
         ...(signal ? { signal } : {})
       })
-      const runtime = updateEphemeralVmRuntimeStatus(app.getPath('userData'), result.runtime.id, {
-        sshTargetId: ssh.targetId
-      })
+      const runtime = updateEphemeralVmRuntimeStatus(
+        getAppEnvironment().getPath('userData'),
+        result.runtime.id,
+        {
+          sshTargetId: ssh.targetId
+        }
+      )
       return {
         ok: true,
         connectionType: 'ssh',
@@ -171,7 +175,7 @@ export async function provisionEphemeralVmForRepo(
       // Why: a failed SSH connect leaves a running environment nobody can reach, so tear it
       // down rather than leaking a paid/booted resource on every failed attempt.
       await cleanupEphemeralVmRuntime({
-        userDataPath: app.getPath('userData'),
+        userDataPath: getAppEnvironment().getPath('userData'),
         repoPath: repo.repo.path,
         recipe,
         runtimeId: result.runtime.id
@@ -187,14 +191,14 @@ export async function provisionEphemeralVmForRepo(
 
   let environment: ReturnType<typeof addEnvironmentFromPairingCode>
   try {
-    environment = addEnvironmentFromPairingCode(app.getPath('userData'), {
+    environment = addEnvironmentFromPairingCode(getAppEnvironment().getPath('userData'), {
       name: buildEphemeralEnvironmentName(repo.repo.displayName, result.runtime.id),
       pairingCode: connection.pairingCode,
       source: 'ephemeral-vm'
     })
   } catch (error) {
     await cleanupEphemeralVmRuntime({
-      userDataPath: app.getPath('userData'),
+      userDataPath: getAppEnvironment().getPath('userData'),
       repoPath: repo.repo.path,
       recipe,
       runtimeId: result.runtime.id
@@ -206,9 +210,13 @@ export async function provisionEphemeralVmForRepo(
       stderr: redactEphemeralVmRecipeDiagnosticText(result.start.stderr)
     }
   }
-  const runtime = updateEphemeralVmRuntimeStatus(app.getPath('userData'), result.runtime.id, {
-    runtimeEnvironmentId: environment.id
-  })
+  const runtime = updateEphemeralVmRuntimeStatus(
+    getAppEnvironment().getPath('userData'),
+    result.runtime.id,
+    {
+      runtimeEnvironmentId: environment.id
+    }
+  )
   return {
     ok: true,
     connectionType: 'orca-server',
