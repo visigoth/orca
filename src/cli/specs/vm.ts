@@ -3,6 +3,27 @@ import { GLOBAL_FLAGS } from '../args'
 
 export const VM_COMMAND_SPECS: CommandSpec[] = [
   {
+    path: ['vm', 'runtime', 'list'],
+    summary: 'List environments provisioned by recipes on this runtime',
+    usage: 'orca vm runtime list [--json]',
+    allowedFlags: [...GLOBAL_FLAGS],
+    notes: [
+      'An "(unattached)" entry is an environment no workspace claims — usually a create that failed partway. Nothing tears those down on their own; use `vm runtime cleanup`.'
+    ],
+    examples: ['orca vm runtime list --json']
+  },
+  {
+    path: ['vm', 'runtime', 'cleanup'],
+    summary: "Run a provisioned environment's destroy hook and release its SSH target",
+    usage: 'orca vm runtime cleanup --runtime <id> [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'runtime'],
+    notes: [
+      'Deleting a workspace already does this for the environment behind it; this is for the ones left unattached by a failed create.',
+      'Safe to re-run: an environment already cleaned reports succeeded without re-running the hook.'
+    ],
+    examples: ['orca vm runtime cleanup --runtime orca-4c9fe533-40a6-424f-82bd-814c55c1fac1']
+  },
+  {
     path: ['vm', 'recipe', 'list'],
     summary: 'List environment recipes available for a repo',
     usage: 'orca vm recipe list --repo <selector> [--json]',

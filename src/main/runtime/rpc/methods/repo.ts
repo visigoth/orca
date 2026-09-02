@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { defineMethod, type RpcMethod } from '../core'
+import { tearDownEphemeralVmForSshTarget } from './ephemeral-vm-teardown'
 import { OptionalFiniteNumber, OptionalString, requiredString } from '../schemas'
 import { PROJECT_RUNTIME_METHODS } from './project-runtime-rpc-methods'
 import { FOLDER_WORKSPACE_METHODS } from './folder-workspace'
@@ -243,7 +244,20 @@ export const REPO_METHODS: RpcMethod[] = [
   defineMethod({
     name: 'repo.rm',
     params: RepoSelector,
-    handler: async (params, { runtime }) => runtime.removeProject(params.repo)
+    handler: async (params, { runtime }) => {
+      // An SSH-mode per-workspace environment's workspace IS the repo's main worktree, so its
+      // deletion arrives here rather than at worktree.rm. Read the repo's runtime-owned SSH
+      // target before removal, or the live container and its hidden target leak.
+      const connectionId = await runtime
+        .showRepo(params.repo)
+        .then((repo) => repo.connectionId ?? null)
+        .catch(() => null)
+      const result = await runtime.removeProject(params.repo)
+      if (connectionId) {
+        await tearDownEphemeralVmForSshTarget(connectionId)
+      }
+      return result
+    }
   }),
   defineMethod({
     name: 'repo.reorder',

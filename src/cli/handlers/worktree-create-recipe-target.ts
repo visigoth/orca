@@ -47,3 +47,31 @@ export async function provisionRecipeTarget(
   }
   return response.result
 }
+
+/**
+ * Bind a provisioned runtime to the workspace it now backs.
+ *
+ * Provisioning happens before the workspace exists, so the runtime record starts with no
+ * workspaceId. Deletion matches environments by that id, so skipping this step leaves the
+ * container alive after its workspace is gone — the environment outlives everything it was
+ * created for.
+ *
+ * Non-fatal by design: the workspace exists either way, and failing here would strand it.
+ */
+export async function attachRecipeRuntimeToWorkspace(
+  client: Parameters<CommandHandler>[0]['client'],
+  provisioned: ProvisionedRecipeTarget | null,
+  workspaceId: string | undefined
+): Promise<void> {
+  if (!provisioned?.runtimeId || !workspaceId) {
+    return
+  }
+  try {
+    await client.call('vm.attachWorkspace', { runtimeId: provisioned.runtimeId, workspaceId })
+  } catch (error) {
+    process.stderr.write(
+      `warning: could not attach the provisioned environment to the workspace; it will not be ` +
+        `torn down automatically (${String(error)})\n`
+    )
+  }
+}
