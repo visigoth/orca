@@ -1,12 +1,18 @@
 import type { Store } from '../persistence'
 import type { PluginService } from '../plugins/plugin-service'
 import type {
+  EphemeralVmCleanupOutcome,
   EphemeralVmHost,
   EphemeralVmProvisionOutcome,
   EphemeralVmProvisionRequest,
   EphemeralVmRepoRegistration
 } from '../../shared/ephemeral-vm-host'
+import { getAppEnvironment } from '../../shared/app-environment'
 import { parseExecutionHostId } from '../../shared/execution-host'
+import { listEphemeralVmRuntimes } from '../../shared/ephemeral-vm-runtime-store'
+import { cleanupEphemeralVmRuntimeById } from '../ephemeral-vm-cleanup'
+import { cleanupEphemeralVmRuntimesForDeleted } from '../ephemeral-vm-cleanup-for-deleted'
+import { attachEphemeralVmRuntimeToWorkspace } from '../ephemeral-vm-runtime-attachment'
 import { provisionEphemeralVmForRepo } from '../ephemeral-vm-provision-core'
 import { listRecipes } from '../ipc/ephemeral-vm-recipe-context'
 import { getApprovedPluginVmRecipes } from '../plugins/plugin-approved-vm-recipes'
@@ -33,6 +39,10 @@ export class ElectronEphemeralVmHost implements EphemeralVmHost {
     private readonly getStore: () => Store,
     private readonly getPluginService: () => PluginService | undefined
   ) {}
+
+  private userDataPath(): string {
+    return getAppEnvironment().getPath('userData')
+  }
 
   async listRecipes(repoId: string): Promise<unknown> {
     return listRecipes(
@@ -112,5 +122,52 @@ export class ElectronEphemeralVmHost implements EphemeralVmHost {
       invalidateAuthorizedRootsCache()
       return { ok: false, error: error instanceof Error ? error.message : String(error) }
     }
+  }
+
+  attachWorkspace(args: { runtimeId: string; workspaceId: string }): unknown {
+    return attachEphemeralVmRuntimeToWorkspace({
+      userDataPath: this.userDataPath(),
+      runtimeId: args.runtimeId,
+      workspaceId: args.workspaceId
+    })
+  }
+
+  listRuntimes(): unknown[] {
+    return listEphemeralVmRuntimes(this.userDataPath())
+  }
+
+  async cleanupRuntime(runtimeId: string): Promise<EphemeralVmCleanupOutcome> {
+    const userDataPath = this.userDataPath()
+    // Read the target BEFORE cleanup: afterwards the record no longer names it, and the project
+    // rows pinned to it could not be found.
+    const targetBefore = listEphemeralVmRuntimes(userDataPath).find(
+      (entry) => entry.id === runtimeId
+    )?.sshTargetId
+    const cleaned = await cleanupEphemeralVmRuntimeById({
+      store: this.getStore(),
+      userDataPath,
+      runtimeId
+    })
+    if (targetBefore && !cleaned.sshTargetId) {
+      const { purgeOrphanedRuntimeSshProjects } =
+        await import('../ephemeral-vm-orphaned-project-purge')
+      purgeOrphanedRuntimeSshProjects(this.getStore(), [targetBefore])
+    }
+    return {
+      runtimeId: cleaned.id,
+      ...(cleaned.cleanupStatus ? { cleanupStatus: cleaned.cleanupStatus } : {}),
+      ...(cleaned.sshTargetId ? { sshTargetId: cleaned.sshTargetId } : {})
+    }
+  }
+
+  async cleanupForDeleted(args: {
+    workspaceIds?: readonly string[]
+    hostScopedWorkspaces?: readonly { workspaceId: string; executionHostId: string }[]
+    runtimeOwnedSshTargetIds?: readonly string[]
+  }): Promise<{ destroyedSshTargetIds: string[]; retainedSshTargetIds: string[] }> {
+    return cleanupEphemeralVmRuntimesForDeleted({
+      store: this.getStore(),
+      ...args
+    } as Parameters<typeof cleanupEphemeralVmRuntimesForDeleted>[0])
   }
 }

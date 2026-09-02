@@ -32,7 +32,10 @@ import {
   assertCreateParentFlagsCompatible,
   resolveCreateParentSelector
 } from './worktree-create-parent-selector'
-import { provisionRecipeTarget } from './worktree-create-recipe-target'
+import {
+  attachRecipeRuntimeToWorkspace,
+  provisionRecipeTarget
+} from './worktree-create-recipe-target'
 import { getOptionalLinearIssueLinkFlag } from './worktree-linear-issue-link'
 
 type HookWarningResult = {
@@ -270,6 +273,7 @@ export const WORKTREE_HANDLERS: Record<string, CommandHandler> = {
           }
         : {})
     })
+    await attachRecipeRuntimeToWorkspace(client, provisioned, result.result?.worktree?.id)
     printHookWarning(result.result, json)
     printLineageSummary(result.result, json)
     printResult(result, json, formatWorktreeShow)

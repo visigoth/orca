@@ -42,6 +42,13 @@ const VmListRecipes = z.object({
   repo: requiredString('Missing repo selector')
 })
 
+const VmRuntimeId = z.object({ runtimeId: requiredString('Missing runtime id') })
+
+const VmAttachWorkspace = z.object({
+  runtimeId: requiredString('Missing runtime id'),
+  workspaceId: requiredString('Missing workspace id')
+})
+
 const VmProvisionWorkspaceTarget = z.object({
   repo: requiredString('Missing repo selector'),
   recipeId: requiredString('Missing recipe id'),
@@ -52,6 +59,33 @@ const VmProvisionWorkspaceTarget = z.object({
 })
 
 export const EPHEMERAL_VM_METHODS = [
+  defineMethod({
+    // Why: listing and cleaning provisioned runtimes was IPC-only, so a headless host could see
+    // neither what it had provisioned nor tear any of it down. A create that fails partway leaves
+    // a runtime behind by design — its SSH target stays registered so it can be retried or
+    // released — and without these it stays behind forever.
+    name: 'vm.listRuntimes',
+    params: null,
+    handler: async () => requireHost().listRuntimes()
+  }),
+  defineMethod({
+    name: 'vm.cleanup',
+    params: VmRuntimeId,
+    handler: async (params) => requireHost().cleanupRuntime(params.runtimeId)
+  }),
+  defineMethod({
+    // Why this exists: provisioning happens BEFORE the workspace, so the runtime record starts
+    // with no workspaceId. The desktop binds them afterwards over IPC; without the same step the
+    // record stays unattached and deletion can never match it — the environment then survives
+    // every workspace it was created for.
+    name: 'vm.attachWorkspace',
+    params: VmAttachWorkspace,
+    handler: async (params) =>
+      requireHost().attachWorkspace({
+        runtimeId: params.runtimeId,
+        workspaceId: params.workspaceId
+      })
+  }),
   defineMethod({
     name: 'vm.listRecipes',
     params: VmListRecipes,

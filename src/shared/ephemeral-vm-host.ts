@@ -1,6 +1,6 @@
 /**
  * EphemeralVmHost abstracts the host-process facilities the runtime's environment-recipe RPCs
- * need but must not import: provisioning and SSH-backed repo registration.
+ * need but must not import: provisioning, SSH-backed repo registration, and teardown.
  *
  * Why a port at all: the runtime has to stay bootable on plain Node (`pnpm run build:orcad`,
  * enforced by config/scripts/check-runtime-electron-ratchet.mjs against an intentionally EMPTY
@@ -50,6 +50,13 @@ export type EphemeralVmRepoRegistration =
   | { ok: true; repoId: string; projectHostSetupId: string; projectId: string; path: string }
   | { ok: false; error: string }
 
+export type EphemeralVmCleanupOutcome = {
+  runtimeId: string
+  cleanupStatus?: string
+  /** Present while the runtime still owns a registered SSH target. */
+  sshTargetId?: string
+}
+
 export type EphemeralVmHost = {
   listRecipes(repoId: string): Promise<unknown>
   provision(request: EphemeralVmProvisionRequest): Promise<EphemeralVmProvisionOutcome>
@@ -64,6 +71,15 @@ export type EphemeralVmHost = {
     path: string
     sshTargetId?: string
   }): Promise<EphemeralVmRepoRegistration>
+  attachWorkspace(args: { runtimeId: string; workspaceId: string }): unknown
+  listRuntimes(): unknown[]
+  cleanupRuntime(runtimeId: string): Promise<EphemeralVmCleanupOutcome>
+  /** Teardown driven by deletion; returns the targets confirmed destroyed. */
+  cleanupForDeleted(args: {
+    workspaceIds?: readonly string[]
+    hostScopedWorkspaces?: readonly { workspaceId: string; executionHostId: string }[]
+    runtimeOwnedSshTargetIds?: readonly string[]
+  }): Promise<{ destroyedSshTargetIds: string[]; retainedSshTargetIds: string[] }>
 }
 
 /**
