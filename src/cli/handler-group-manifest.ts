@@ -239,7 +239,7 @@ export const HANDLER_GROUPS: readonly HandlerGroup[] = [
   },
   {
     name: 'vm',
-    keys: ['vm recipe doctor'],
+    keys: ['vm recipe list', 'vm recipe doctor'],
     load: async () => (await import('./handlers/vm.js')).VM_HANDLERS
   },
   {

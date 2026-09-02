@@ -32,6 +32,7 @@ import {
   assertCreateParentFlagsCompatible,
   resolveCreateParentSelector
 } from './worktree-create-parent-selector'
+import { provisionRecipeTarget } from './worktree-create-recipe-target'
 import { getOptionalLinearIssueLinkFlag } from './worktree-linear-issue-link'
 
 type HookWarningResult = {
@@ -231,8 +232,15 @@ export const WORKTREE_HANDLERS: Record<string, CommandHandler> = {
     const linearIssueLink = getOptionalLinearIssueLinkFlag(flags, 'linear-issue')
     const activate = flags.get('activate') === true || flags.get('run-hooks') === true
     const name = getRequiredStringFlag(flags, 'name')
+    const sourceRepo = await getCreateRepoSelector(flags, cwdParentWorktree, client)
+    // Recipe selection happens BEFORE create: provisioning yields a repo id bound to the new
+    // environment, and the workspace has to be created against that rather than the source repo.
+    // Resolved first so a provisioning failure aborts before any workspace state is written.
+    const provisioned = flags.has('recipe')
+      ? await provisionRecipeTarget(flags, sourceRepo, name, client)
+      : null
     const result = await client.call<RuntimeWorktreeCreateResult>('worktree.create', {
-      repo: await getCreateRepoSelector(flags, cwdParentWorktree, client),
+      repo: provisioned ? `id:${provisioned.repoId}` : sourceRepo,
       name,
       displayName: name,
       displayNameKind: 'user',

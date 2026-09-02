@@ -3,6 +3,17 @@ import { GLOBAL_FLAGS } from '../args'
 
 export const VM_COMMAND_SPECS: CommandSpec[] = [
   {
+    path: ['vm', 'recipe', 'list'],
+    summary: 'List environment recipes available for a repo',
+    usage: 'orca vm recipe list --repo <selector> [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'repo'],
+    notes: [
+      'Combines recipes from the repo orca.yaml with those contributed by enabled plugins — the same set the app offers in its Run on picker.',
+      'Use an id from here with `orca worktree create --recipe <id>`.'
+    ],
+    examples: ['orca vm recipe list --repo name:stoa --json']
+  },
+  {
     path: ['vm', 'recipe', 'doctor'],
     summary: 'Validate a per-workspace environment recipe without provisioning by default',
     usage:

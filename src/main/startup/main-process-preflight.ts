@@ -61,6 +61,8 @@ import { setMainHttpClient } from '../network/http-client'
 import { electronSpeechServiceFactories } from '../host/electron-speech-services'
 import { setSpeechServiceFactories } from '../speech/speech-runtime-service'
 import { setWorktreeWatcherRemoval } from '../ipc/worktree-watcher-removal'
+import { setEphemeralVmHost } from '../../shared/ephemeral-vm-host'
+import { ElectronEphemeralVmHost } from '../host/electron-ephemeral-vm-host'
 import { desktopWorktreeWatcherRemoval } from '../ipc/filesystem-watcher'
 import { setDefaultProxySessionResolver } from '../network/proxy-settings'
 import { initDataPath, getCanonicalUserDataPath } from '../persistence'
@@ -247,6 +249,17 @@ export function runMainProcessPreflight(options: MainProcessPreflightOptions): b
   // request in. A host without them rejects speech calls rather than pretending.
   setSpeechServiceFactories(electronSpeechServiceFactories)
   setWorktreeWatcherRemoval(desktopWorktreeWatcherRemoval)
+  // Why here: provisioning an environment recipe reaches `electron` directly and, through the SSH
+  // IPC layer, the browser stack and node:sqlite behind it. The runtime RPCs that expose recipes
+  // must not import any of that or `pnpm run build:orcad` stops producing a plain-Node runtime,
+  // so they go through this port instead. Store and plugin service are read lazily because both
+  // are constructed later, in the ready phase.
+  setEphemeralVmHost(
+    new ElectronEphemeralVmHost(
+      () => state.store!,
+      () => state.pluginService ?? undefined
+    )
+  )
   // Why: couple to dev-parent only for electron-vite desktop runs; `orca serve`'s parent (CLI shim/background shell) isn't the intended server lifetime.
   const shouldCoupleToDevParent = isDev && !state.isServeMode
   installDevParentDisconnectQuit(shouldCoupleToDevParent)
