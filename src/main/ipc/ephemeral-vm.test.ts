@@ -1,5 +1,5 @@
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { encodePairingOffer, PAIRING_OFFER_VERSION } from '../../shared/pairing'
@@ -45,6 +45,7 @@ vi.mock('./runtime-environments', () => ({
   invalidateRuntimeEnvironmentTransport: invalidateRuntimeEnvironmentTransportMock
 }))
 
+import { installFakeAppEnvironment } from '../../../config/scripts/vitest-host-ports-setup'
 import { registerEphemeralVmHandlers } from './ephemeral-vm'
 
 const tempDirs: string[] = []
@@ -59,6 +60,21 @@ function makeDir(prefix: string): string {
   const dir = mkdtempSync(join(tmpdir(), prefix))
   tempDirs.push(dir)
   return dir
+}
+
+/**
+ * Point BOTH userData mechanisms at the same directory.
+ *
+ * The IPC handlers under test still read electron's `app.getPath`, while the shared provisioning
+ * core reads the AppEnvironment port. Setting only the electron mock leaves the port on the global
+ * test setup's own temp directory, so a provision writes its runtime record to one place and the
+ * assertions read another — which surfaces as an empty runtime list, not as an error.
+ */
+function useUserDataPath(dir: string): void {
+  getPathMock.mockReturnValue(dir)
+  installFakeAppEnvironment({
+    getPath: (name) => (name === 'userData' ? dir : name === 'home' ? homedir() : tmpdir())
+  })
 }
 
 function makePairingCode(): string {
@@ -245,7 +261,7 @@ describe('registerEphemeralVmHandlers', () => {
   it('uses an immutable plugin recipe snapshot after the plugin is removed', async () => {
     const userDataPath = makeDir('orca-ephemeral-vm-ipc-user-data-')
     const repoPath = makeDir('orca-ephemeral-vm-ipc-repo-')
-    getPathMock.mockReturnValue(userDataPath)
+    useUserDataPath(userDataPath)
     const startPath = join(repoPath, 'start.js')
     const destroyPath = join(repoPath, 'destroy.js')
     writeFileSync(
@@ -290,7 +306,7 @@ describe('registerEphemeralVmHandlers', () => {
   it('never substitutes a later same-id plugin recipe for a legacy runtime', async () => {
     const userDataPath = makeDir('orca-ephemeral-vm-ipc-user-data-')
     const repoPath = makeDir('orca-ephemeral-vm-ipc-repo-')
-    getPathMock.mockReturnValue(userDataPath)
+    useUserDataPath(userDataPath)
     const pluginDestroyPath = join(repoPath, 'plugin-destroy.js')
     writeFileSync(
       pluginDestroyPath,
@@ -337,7 +353,7 @@ describe('registerEphemeralVmHandlers', () => {
   it('provisions a recipe and persists the ephemeral runtime', async () => {
     const userDataPath = makeDir('orca-ephemeral-vm-ipc-user-data-')
     const repoPath = makeDir('orca-ephemeral-vm-ipc-repo-')
-    getPathMock.mockReturnValue(userDataPath)
+    useUserDataPath(userDataPath)
     mkdirSync(join(repoPath, 'scripts'), { recursive: true })
     const startPath = join(repoPath, 'scripts', 'start.js')
     writeFileSync(
@@ -418,7 +434,7 @@ describe('registerEphemeralVmHandlers', () => {
   it('provisions an ssh recipe without creating a runtime environment', async () => {
     const userDataPath = makeDir('orca-ephemeral-vm-ipc-user-data-')
     const repoPath = makeDir('orca-ephemeral-vm-ipc-repo-')
-    getPathMock.mockReturnValue(userDataPath)
+    useUserDataPath(userDataPath)
     mkdirSync(join(repoPath, 'scripts'), { recursive: true })
     const startPath = join(repoPath, 'scripts', 'start-ssh.js')
     writeFileSync(
@@ -501,7 +517,7 @@ describe('registerEphemeralVmHandlers', () => {
   it('retains the runtime-owned SSH target when destroy fails', async () => {
     const userDataPath = makeDir('orca-ephemeral-vm-ipc-user-data-')
     const repoPath = makeDir('orca-ephemeral-vm-ipc-repo-')
-    getPathMock.mockReturnValue(userDataPath)
+    useUserDataPath(userDataPath)
     mkdirSync(join(repoPath, 'scripts'), { recursive: true })
     const startPath = join(repoPath, 'scripts', 'start-ssh.js')
     const destroyPath = join(repoPath, 'scripts', 'destroy.js')
@@ -560,7 +576,7 @@ describe('registerEphemeralVmHandlers', () => {
   it('retries hidden SSH teardown without rerunning completed provider cleanup', async () => {
     const userDataPath = makeDir('orca-ephemeral-vm-ipc-user-data-')
     const repoPath = makeDir('orca-ephemeral-vm-ipc-repo-')
-    getPathMock.mockReturnValue(userDataPath)
+    useUserDataPath(userDataPath)
     upsertEphemeralVmRuntime(userDataPath, {
       id: 'runtime-cleanup-retry',
       recipeId: 'cloud-sandbox',
@@ -607,7 +623,7 @@ describe('registerEphemeralVmHandlers', () => {
   it('runs suspend and resume for an attached ephemeral VM workspace', async () => {
     const userDataPath = makeDir('orca-ephemeral-vm-ipc-user-data-')
     const repoPath = makeDir('orca-ephemeral-vm-ipc-repo-')
-    getPathMock.mockReturnValue(userDataPath)
+    useUserDataPath(userDataPath)
     mkdirSync(join(repoPath, 'scripts'), { recursive: true })
     const startPath = join(repoPath, 'scripts', 'start.js')
     const suspendPath = join(repoPath, 'scripts', 'suspend.js')
@@ -711,7 +727,7 @@ describe('registerEphemeralVmHandlers', () => {
   it('returns a copyable cleanup command for a persisted runtime', async () => {
     const userDataPath = makeDir('orca-ephemeral-vm-ipc-user-data-')
     const repoPath = makeDir('orca-ephemeral-vm-ipc-repo-')
-    getPathMock.mockReturnValue(userDataPath)
+    useUserDataPath(userDataPath)
     mkdirSync(join(repoPath, 'scripts'), { recursive: true })
     const startPath = join(repoPath, 'scripts', 'start.js')
     const cleanupPath = join(repoPath, 'scripts', 'cleanup.js')
@@ -758,7 +774,7 @@ describe('registerEphemeralVmHandlers', () => {
   it('streams provision logs and cancels an active provision', async () => {
     const userDataPath = makeDir('orca-ephemeral-vm-ipc-user-data-')
     const repoPath = makeDir('orca-ephemeral-vm-ipc-repo-')
-    getPathMock.mockReturnValue(userDataPath)
+    useUserDataPath(userDataPath)
     mkdirSync(join(repoPath, 'scripts'), { recursive: true })
     const startPath = join(repoPath, 'scripts', 'start.js')
     writeFileSync(
@@ -813,7 +829,7 @@ describe('registerEphemeralVmHandlers', () => {
   it('redacts recipe stdout when provisioning fails', async () => {
     const userDataPath = makeDir('orca-ephemeral-vm-ipc-user-data-')
     const repoPath = makeDir('orca-ephemeral-vm-ipc-repo-')
-    getPathMock.mockReturnValue(userDataPath)
+    useUserDataPath(userDataPath)
     mkdirSync(join(repoPath, 'scripts'), { recursive: true })
     const startPath = join(repoPath, 'scripts', 'start.js')
     writeFileSync(
