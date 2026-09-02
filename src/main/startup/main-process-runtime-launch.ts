@@ -9,6 +9,7 @@ import {
 import { OrcaRuntimeRpcServer } from '../runtime/runtime-rpc'
 import { registerMobileHandlers } from '../ipc/mobile'
 import { getLocalPtyProvider, registerHeadlessPtyRuntime } from '../ipc/pty'
+import { registerSshHandlers } from '../ipc/ssh'
 import { LocalPtyProvider } from '../providers/local-pty-provider'
 import { HEADLESS_RUNTIME_WINDOW_ID } from '../../shared/runtime-types'
 import { OffscreenBrowserBackend } from '../browser/offscreen-browser-backend'
@@ -138,6 +139,17 @@ async function launchServeMode(
     prepareCodexSessionResumeForLaunch,
     { onCodexHomePtySpawned: handleCodexHomePtySpawned, onPtyExit: handlePtyExit }
   )
+  // Why: SSH handlers are otherwise registered only by attachMainWindowServices, which runs when a
+  // BrowserWindow attaches. Serve mode never creates one, so on a headless host the SSH connection
+  // store stays null and anything needing it fails with "SSH handlers are not registered" — including
+  // every SSH-mode environment recipe, which provisions its environment successfully and then cannot
+  // be connected to, leaving a booted sandbox stranded.
+  //
+  // The window getter is already typed `() => BrowserWindow | null`, and the credential prompt and
+  // advertised-URL refresh both handle null, so this is the same call with no window rather than a
+  // separate headless code path. Placed beside the headless PTY registration for the same reason it
+  // is: handlers must exist before runtimeRpc.start() below accepts a client that can invoke them.
+  registerSshHandlers(state.store!, () => null, runtime)
   await runtime.refreshRestoredOrchestrationAuthority()
   await runtime.reconcileLegacyWorkerTerminals()
   // Why: headless servers can't mount <webview> panes; use offscreen WebContents, gated on a real display so browser.headless.v1 stays honest.
