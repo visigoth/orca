@@ -18,6 +18,7 @@
  * web build graph).
  */
 
+import type { EphemeralVmRecipeResultWarning } from './ephemeral-vm-recipe-diagnostics'
 import type { EphemeralVmRecipeResult } from './ephemeral-vm-recipes'
 
 export type EphemeralVmProvisionRequest = {
@@ -42,13 +43,31 @@ export type EphemeralVmProvisionOutcome =
       environmentId?: string
       recipeResult: EphemeralVmRecipeResult
       expectedRefHead?: string
-      warnings: { message?: string }[]
+      warnings: EphemeralVmRecipeResultWarning[]
     }
   | { ok: false; error: string; stderr: string; stdout: string }
 
 export type EphemeralVmRepoRegistration =
   | { ok: true; repoId: string; projectHostSetupId: string; projectId: string; path: string }
   | { ok: false; error: string }
+
+/**
+ * What `vm.provisionWorkspaceTarget` hands back: a provisioned environment AND the registered
+ * checkout on it, in one shape. Declared here rather than inline in the RPC so the clients that
+ * consume it — the CLI and the browser client — cannot drift from what the method returns.
+ */
+export type EphemeralVmProvisionedWorkspaceTarget = {
+  runtimeId: string
+  connectionType: 'ssh' | 'orca-server'
+  checkoutMode: 'orca-worktree' | 'provisioned-root'
+  hostId: string
+  projectHostSetupId: string
+  repoId: string
+  projectId: string
+  path: string
+  expectedRefHead?: string
+  warnings: EphemeralVmRecipeResultWarning[]
+}
 
 export type EphemeralVmCleanupOutcome = {
   runtimeId: string

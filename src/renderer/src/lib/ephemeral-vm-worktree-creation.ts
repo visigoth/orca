@@ -71,9 +71,20 @@ export async function prepareRequestForCreate(
     return null
   }
   appendProvisioningWarnings(creationId, preparedTarget.warnings)
+  // Why: registration happened on the HOST when a runtime provisioned the target, so the repo the
+  // workspace is about to be created against exists nowhere in this client's catalog. Everything
+  // that routes by repo row — owner settings, the sidebar's project grouping — would fall back to
+  // defaults until the next refresh. The desktop path adds the row itself, so this is a no-op there.
+  if (!useAppStore.getState().repos.some((repo) => repo.id === preparedTarget.target.repoId)) {
+    try {
+      await useAppStore.getState().fetchRepos()
+    } catch (error) {
+      console.error('Failed to refresh projects after provisioning an environment:', error)
+    }
+  }
   const preparedRequest: WorktreeCreationRequest = {
     ...request,
-    repoId: preparedTarget.setup.repo.id,
+    repoId: preparedTarget.target.repoId,
     ...(preparedTarget.checkoutMode === 'provisioned-root'
       ? { baseBranch: request.baseBranch, compareBaseRef: request.compareBaseRef }
       : getEphemeralVmPortableBaseSelection(request)),
@@ -87,11 +98,11 @@ export async function prepareRequestForCreate(
       : {}),
     workspaceRunContext: {
       kind: 'workspace-run',
-      projectId: preparedTarget.setup.setup.projectId,
-      hostId: preparedTarget.setup.setup.hostId,
-      projectHostSetupId: preparedTarget.setup.setup.id,
-      repoId: preparedTarget.setup.repo.id,
-      path: preparedTarget.setup.repo.path
+      projectId: preparedTarget.target.projectId,
+      hostId: preparedTarget.target.hostId,
+      projectHostSetupId: preparedTarget.target.projectHostSetupId,
+      repoId: preparedTarget.target.repoId,
+      path: preparedTarget.target.path
     }
   }
   if (!useAppStore.getState().pendingWorktreeCreations[creationId]) {

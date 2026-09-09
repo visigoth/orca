@@ -59,8 +59,8 @@ describe('prepareEphemeralVmWorkspaceTarget', () => {
     })
     const setupResult = {
       project: { id: 'project-1' },
-      setup: { id: 'setup-1', hostId: 'local' },
-      repo: { id: 'repo-runtime' }
+      setup: { id: 'setup-1', hostId: 'local', projectId: 'project-1' },
+      repo: { id: 'repo-runtime', path: '/workspace/repo' }
     } as ProjectHostSetupResult
     const setupExistingFolder = vi.fn<PrepareEphemeralVmWorkspaceTargetArgs['setupExistingFolder']>(
       async () => setupResult
@@ -88,9 +88,12 @@ describe('prepareEphemeralVmWorkspaceTarget', () => {
     })
     expect(result).toEqual({
       ok: true,
-      setup: {
-        ...setupResult,
-        setup: { ...setupResult.setup, hostId: 'runtime:env-1' }
+      target: {
+        repoId: 'repo-runtime',
+        path: '/workspace/repo',
+        projectId: 'project-1',
+        projectHostSetupId: 'setup-1',
+        hostId: 'runtime:env-1'
       },
       runtimeId: 'runtime-1',
       checkoutMode: 'orca-worktree',
@@ -137,8 +140,8 @@ describe('prepareEphemeralVmWorkspaceTarget', () => {
     })
     const setupResult = {
       project: { id: 'project-1' },
-      setup: { id: 'setup-1', hostId: 'local' },
-      repo: { id: 'repo-runtime' }
+      setup: { id: 'setup-1', hostId: 'local', projectId: 'project-1' },
+      repo: { id: 'repo-runtime', path: '/workspace/repo' }
     } as ProjectHostSetupResult
     const setupExistingFolder = vi.fn<PrepareEphemeralVmWorkspaceTargetArgs['setupExistingFolder']>(
       async () => setupResult
@@ -161,9 +164,12 @@ describe('prepareEphemeralVmWorkspaceTarget', () => {
     })
     expect(result).toEqual({
       ok: true,
-      setup: {
-        ...setupResult,
-        setup: { ...setupResult.setup, hostId: 'ssh:runtime-ssh-runtime-1' }
+      target: {
+        repoId: 'repo-runtime',
+        path: '/workspace/repo',
+        projectId: 'project-1',
+        projectHostSetupId: 'setup-1',
+        hostId: 'ssh:runtime-ssh-runtime-1'
       },
       runtimeId: 'runtime-1',
       checkoutMode: 'provisioned-root',
@@ -172,6 +178,105 @@ describe('prepareEphemeralVmWorkspaceTarget', () => {
       warnings: []
     })
     expect(window.api.ephemeralVm.cleanup).not.toHaveBeenCalled()
+  })
+
+  it('uses the runtime single-call path when the client cannot provision locally', async () => {
+    // The browser client's provision + register happen in ONE RPC; the two-step desktop flow
+    // cannot run there at all, because its local-provider registration refuses the ssh: host a
+    // recipe produces.
+    window.api.ephemeralVm.provisionWorkspaceTarget = vi.fn().mockResolvedValue({
+      runtimeId: 'runtime-1',
+      connectionType: 'ssh',
+      checkoutMode: 'orca-worktree',
+      hostId: 'ssh:runtime-ssh-runtime-1',
+      projectHostSetupId: 'setup-1',
+      repoId: 'repo-provisioned',
+      projectId: 'github:symmory/stoa',
+      path: '/mnt/workspace/stoa',
+      warnings: [{ id: 'recipe.slow', message: 'Provider took 4m' }]
+    })
+    const setupExistingFolder = vi.fn()
+
+    const result = await prepareEphemeralVmWorkspaceTarget({
+      repoId: 'repo-1',
+      recipeId: 'workhorse',
+      projectId: 'github:symmory/stoa',
+      workspaceName: 'Fix Login Race',
+      setupExistingFolder
+    })
+
+    expect(window.api.ephemeralVm.provisionWorkspaceTarget).toHaveBeenCalledWith({
+      repoId: 'repo-1',
+      recipeId: 'workhorse',
+      projectId: 'github:symmory/stoa',
+      workspaceName: 'Fix Login Race'
+    })
+    expect(result).toEqual({
+      ok: true,
+      target: {
+        repoId: 'repo-provisioned',
+        path: '/mnt/workspace/stoa',
+        projectId: 'github:symmory/stoa',
+        projectHostSetupId: 'setup-1',
+        hostId: 'ssh:runtime-ssh-runtime-1'
+      },
+      runtimeId: 'runtime-1',
+      checkoutMode: 'orca-worktree',
+      stderr: '',
+      warnings: [{ id: 'recipe.slow', message: 'Provider took 4m' }]
+    })
+    // The workspace is created against the repo the recipe produced, never the source repo —
+    // creating on the source would put the agent back on the Orca host.
+    expect(window.api.ephemeralVm.provision).not.toHaveBeenCalled()
+    expect(setupExistingFolder).not.toHaveBeenCalled()
+  })
+
+  it('reports a failed runtime provision instead of throwing at the caller', async () => {
+    window.api.ephemeralVm.provisionWorkspaceTarget = vi
+      .fn()
+      .mockRejectedValue(new Error('create.sh exited 1\nno such image'))
+
+    const result = await prepareEphemeralVmWorkspaceTarget({
+      repoId: 'repo-1',
+      recipeId: 'workhorse',
+      projectId: 'github:symmory/stoa',
+      workspaceName: 'Fix Login Race',
+      setupExistingFolder: vi.fn()
+    })
+
+    expect(result).toEqual({
+      ok: false,
+      error: 'create.sh exited 1\nno such image',
+      stderr: ''
+    })
+  })
+
+  it('cleans up a runtime-provisioned root that came back without SSH', async () => {
+    window.api.ephemeralVm.provisionWorkspaceTarget = vi.fn().mockResolvedValue({
+      runtimeId: 'runtime-1',
+      connectionType: 'orca-server',
+      checkoutMode: 'provisioned-root',
+      hostId: 'runtime:env-1',
+      projectHostSetupId: 'setup-1',
+      repoId: 'repo-provisioned',
+      projectId: 'github:symmory/stoa',
+      path: '/mnt/workspace/stoa',
+      warnings: []
+    })
+
+    const result = await prepareEphemeralVmWorkspaceTarget({
+      repoId: 'repo-1',
+      recipeId: 'workhorse',
+      projectId: 'github:symmory/stoa',
+      workspaceName: 'Fix Login Race',
+      setupExistingFolder: vi.fn()
+    })
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: 'Provisioned-root recipes currently require a direct SSH connection.'
+    })
+    expect(window.api.ephemeralVm.cleanup).toHaveBeenCalledWith({ runtimeId: 'runtime-1' })
   })
 
   it('rejects and cleans up an Orca-server provisioned root before project import', async () => {

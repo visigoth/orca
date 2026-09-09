@@ -222,6 +222,7 @@ export function useComposerRuntimeTargetSelection(input: ComposerRuntimeTargetSe
     repoIsGit: selectedRepoIsGit,
     repoConnectionId: selectedRecipeRepoConnectionId,
     repoExecutionHostId: selectedRepo ? getRepoExecutionHostId(selectedRepo) : null,
+    activeRuntimeEnvironmentId: settings?.activeRuntimeEnvironmentId ?? null,
     projectGroupTarget: isProjectGroupTarget,
     initialRecipeId: initialEphemeralVmRecipeId
   })

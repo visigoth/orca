@@ -219,14 +219,12 @@ describe('runBackgroundWorktreeCreation', () => {
       environmentId: 'env-1',
       stderr: '',
       warnings: [],
-      setup: {
-        project: { id: 'project-1' },
-        setup: {
-          id: 'setup-runtime',
-          projectId: 'project-1',
-          hostId: 'runtime:env-1'
-        },
-        repo: { id: 'repo-runtime', path: '/workspace/repo' }
+      target: {
+        repoId: 'repo-runtime',
+        path: '/workspace/repo',
+        projectId: 'project-1',
+        projectHostSetupId: 'setup-runtime',
+        hostId: 'runtime:env-1'
       }
     })
     store.createWorktree.mockResolvedValue({
@@ -280,14 +278,12 @@ describe('runBackgroundWorktreeCreation', () => {
       environmentId: 'env-1',
       stderr: '',
       warnings: [],
-      setup: {
-        project: { id: 'project-1' },
-        setup: {
-          id: 'setup-runtime',
-          projectId: 'project-1',
-          hostId: 'runtime:env-1'
-        },
-        repo: { id: 'repo-runtime', path: '/workspace/repo' }
+      target: {
+        repoId: 'repo-runtime',
+        path: '/workspace/repo',
+        projectId: 'project-1',
+        projectHostSetupId: 'setup-runtime',
+        hostId: 'runtime:env-1'
       }
     })
     store.createWorktree.mockResolvedValue({
@@ -351,14 +347,12 @@ describe('runBackgroundWorktreeCreation', () => {
             remediation: 'Use wss://.'
           }
         ],
-        setup: {
-          project: { id: 'project-1' },
-          setup: {
-            id: 'setup-runtime',
-            projectId: 'project-1',
-            hostId: 'runtime:env-1'
-          },
-          repo: { id: 'repo-runtime', path: '/workspace/repo' }
+        target: {
+          repoId: 'repo-runtime',
+          path: '/workspace/repo',
+          projectId: 'project-1',
+          projectHostSetupId: 'setup-runtime',
+          hostId: 'runtime:env-1'
         }
       }
     })

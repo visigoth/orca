@@ -1,4 +1,10 @@
-import { toRuntimeExecutionHostId, toSshExecutionHostId } from '../../../shared/execution-host'
+import {
+  LOCAL_EXECUTION_HOST_ID,
+  parseExecutionHostId,
+  toRuntimeExecutionHostId,
+  toSshExecutionHostId,
+  type ExecutionHostId
+} from '../../../shared/execution-host'
 import type {
   ProjectHostSetupExistingFolderArgs,
   ProjectHostSetupResult
@@ -25,10 +31,25 @@ export type PrepareEphemeralVmWorkspaceTargetArgs = {
   ) => Promise<ProjectHostSetupResult | null>
 }
 
+/**
+ * Where the workspace will be created, flattened out of whatever registered it.
+ *
+ * A projection rather than the `ProjectHostSetupResult` itself: the runtime's single-call
+ * registration returns these five fields and nothing else, and fabricating a Project/Repo pair
+ * around them to satisfy a type would invent rows that do not exist here.
+ */
+export type PreparedEphemeralVmWorkspaceTarget = {
+  repoId: string
+  path: string
+  projectId: string
+  projectHostSetupId: string
+  hostId: ExecutionHostId
+}
+
 export type PrepareEphemeralVmWorkspaceTargetResult =
   | {
       ok: true
-      setup: ProjectHostSetupResult
+      target: PreparedEphemeralVmWorkspaceTarget
       runtimeId: string
       checkoutMode: 'orca-worktree' | 'provisioned-root'
       environmentId?: string
@@ -45,6 +66,14 @@ export type PrepareEphemeralVmWorkspaceTargetResult =
 export async function prepareEphemeralVmWorkspaceTarget(
   args: PrepareEphemeralVmWorkspaceTargetArgs
 ): Promise<PrepareEphemeralVmWorkspaceTargetResult> {
+  // The browser client cannot run the two-step flow below: `provision` streams progress over
+  // Electron IPC, and the local-provider registration that follows it refuses the ssh: host a
+  // recipe produces. The runtime does both halves in one RPC instead, so prefer it wherever it
+  // exists — see EphemeralVmApi.provisionWorkspaceTarget.
+  const provisionWorkspaceTarget = window.api.ephemeralVm.provisionWorkspaceTarget
+  if (provisionWorkspaceTarget) {
+    return await prepareOnRuntime(provisionWorkspaceTarget, args)
+  }
   const provisioned = await window.api.ephemeralVm.provision({
     repoId: args.repoId,
     recipeId: args.recipeId,
@@ -132,7 +161,13 @@ export async function prepareEphemeralVmWorkspaceTarget(
 
   const success = {
     ok: true,
-    setup,
+    target: {
+      repoId: setup.repo.id,
+      path: setup.repo.path,
+      projectId: setup.setup.projectId,
+      projectHostSetupId: setup.setup.id,
+      hostId
+    },
     runtimeId: provisioned.runtime.id,
     checkoutMode,
     ...(checkoutMode === 'provisioned-root' &&
@@ -147,6 +182,65 @@ export async function prepareEphemeralVmWorkspaceTarget(
   return provisioned.connectionType === 'orca-server'
     ? { ...success, environmentId: provisioned.environment.id }
     : success
+}
+
+/**
+ * The runtime-RPC path: one call provisions the environment AND registers the checkout on it.
+ *
+ * No progress stream and no cancellation, because there is no per-chunk channel behind an RPC —
+ * the recipe's stderr reaches the caller only if the create FAILS, carried on the error.
+ */
+async function prepareOnRuntime(
+  provisionWorkspaceTarget: NonNullable<typeof window.api.ephemeralVm.provisionWorkspaceTarget>,
+  args: PrepareEphemeralVmWorkspaceTargetArgs
+): Promise<PrepareEphemeralVmWorkspaceTargetResult> {
+  let provisioned: Awaited<ReturnType<typeof provisionWorkspaceTarget>>
+  try {
+    provisioned = await provisionWorkspaceTarget({
+      repoId: args.repoId,
+      recipeId: args.recipeId,
+      projectId: args.projectId,
+      workspaceName: args.workspaceName,
+      ...(args.branch ? { branch: args.branch } : {}),
+      ...(args.ref ? { ref: args.ref } : {})
+    })
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+      stderr: ''
+    }
+  }
+
+  if (provisioned.checkoutMode === 'provisioned-root' && provisioned.connectionType !== 'ssh') {
+    await cleanupProvisionedRuntime(provisioned.runtimeId)
+    return {
+      ok: false,
+      error: translate(
+        'auto.lib.ephemeralVmWorkspaceTarget.provisionedRootRequiresSsh',
+        'Provisioned-root recipes currently require a direct SSH connection.'
+      ),
+      stderr: ''
+    }
+  }
+
+  const parsedHost = parseExecutionHostId(provisioned.hostId)
+  return {
+    ok: true,
+    target: {
+      repoId: provisioned.repoId,
+      path: provisioned.path,
+      projectId: provisioned.projectId,
+      projectHostSetupId: provisioned.projectHostSetupId,
+      hostId: parsedHost?.id ?? LOCAL_EXECUTION_HOST_ID
+    },
+    runtimeId: provisioned.runtimeId,
+    checkoutMode: provisioned.checkoutMode,
+    ...(parsedHost?.kind === 'runtime' ? { environmentId: parsedHost.environmentId } : {}),
+    ...(provisioned.expectedRefHead ? { expectedRefHead: provisioned.expectedRefHead } : {}),
+    stderr: '',
+    warnings: provisioned.warnings
+  }
 }
 
 async function cleanupProvisionedRuntime(runtimeId: string): Promise<void> {

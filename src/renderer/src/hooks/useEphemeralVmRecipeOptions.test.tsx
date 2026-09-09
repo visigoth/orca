@@ -60,12 +60,14 @@ function Harness({
   repoId,
   initialRecipeId,
   enabled = true,
-  repoExecutionHostId = 'local'
+  repoExecutionHostId = 'local',
+  activeRuntimeEnvironmentId = null
 }: {
   repoId: string
   initialRecipeId?: string
   enabled?: boolean
   repoExecutionHostId?: 'local' | `runtime:${string}`
+  activeRuntimeEnvironmentId?: string | null
 }): React.JSX.Element {
   const state = useEphemeralVmRecipeOptions({
     enabled,
@@ -73,6 +75,7 @@ function Harness({
     repoIsGit: true,
     repoConnectionId: null,
     repoExecutionHostId,
+    activeRuntimeEnvironmentId,
     projectGroupTarget: false,
     initialRecipeId
   })
@@ -146,6 +149,41 @@ describe('useEphemeralVmRecipeOptions', () => {
     installApi(listRecipes)
 
     await render(<Harness repoId="repo-1" enabled={false} />)
+
+    expect(listRecipes).not.toHaveBeenCalled()
+  })
+
+  it('discovers recipes on the runtime a browser client is paired to', async () => {
+    // A browser client's repos are owned by `runtime:<id>`, never `local`. Gating on `local`
+    // alone left the web UI with an empty recipe list and no way to pick a container.
+    const listRecipes = vi.fn().mockResolvedValue(result(['workhorse']))
+    installApi(listRecipes)
+
+    const { container } = await render(
+      <Harness
+        repoId="repo-runtime"
+        repoExecutionHostId="runtime:web-env-1"
+        activeRuntimeEnvironmentId="web-env-1"
+      />
+    )
+
+    await vi.waitFor(() =>
+      expect(container.querySelector('[data-testid="recipes"]')?.textContent).toBe('workhorse')
+    )
+    expect(listRecipes).toHaveBeenCalledWith({ repoId: 'repo-runtime' })
+  })
+
+  it('does not probe a runtime host other than the one this client is paired to', async () => {
+    const listRecipes = vi.fn().mockResolvedValue(result(['workhorse']))
+    installApi(listRecipes)
+
+    await render(
+      <Harness
+        repoId="repo-runtime"
+        repoExecutionHostId="runtime:other-env"
+        activeRuntimeEnvironmentId="web-env-1"
+      />
+    )
 
     expect(listRecipes).not.toHaveBeenCalled()
   })

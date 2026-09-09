@@ -39,6 +39,7 @@ export type RuntimeClientSettings = Pick<
   | 'artifactSharingEnabled'
   | 'worktreeVisibilityDefaults'
   | 'agentSkillSharingEnabled'
+  | 'experimentalEphemeralVms'
 > & {
   hostSettingOverrides: RuntimeHostDisplayLabelOverrides
 }
@@ -67,6 +68,7 @@ export type RuntimeClientSettingsUpdate = Pick<
   | 'minimaxUsageModels'
   | 'prBotAuthorOverrides'
   | 'worktreeVisibilityDefaults'
+  | 'experimentalEphemeralVms'
 >
 
 export class RuntimeClientSettingsController {
@@ -104,6 +106,11 @@ export class RuntimeClientSettingsController {
       artifactSharingEnabled: isArtifactSharingEnabled(settings),
       worktreeVisibilityDefaults: settings.worktreeVisibilityDefaults ?? { external: 'hide' },
       agentSkillSharingEnabled: isAgentSkillSharingEnabled(settings),
+      // Why: whether per-workspace environments exist is a property of THIS host — the recipes
+      // come from its repos and plugins, and their hooks run here. A paired client that decides
+      // from its own toggle either hides a feature the host offers or offers one it cannot run,
+      // so the flag is projected read-only and clients mirror it (see the sharing flags above).
+      experimentalEphemeralVms: settings.experimentalEphemeralVms === true,
       hostSettingOverrides: Object.fromEntries(
         [
           ...getHostDisplayLabelOverrides({ hostSettingOverrides: settings.hostSettingOverrides })

@@ -66,6 +66,10 @@ export const SettingsUpdate = z
       .enum(['issues', 'my-issues', 'prs', 'my-prs', 'review', 'all'])
       .optional(),
     experimentalNewWorktreeCardStyle: z.boolean().optional(),
+    // Why writable from a paired client: the recipe picker it gates is a client surface, and the
+    // toggle beside it is the only place a user ever flips it. Read-only would leave the browser
+    // client with a switch that reverts on the next settings read.
+    experimentalEphemeralVms: z.boolean().optional(),
     agentStatusHooksEnabled: z.boolean().optional(),
     defaultRepoSelection: z.array(z.string()).nullable().optional(),
     defaultLinearTeamSelection: z.array(z.string()).nullable().optional(),

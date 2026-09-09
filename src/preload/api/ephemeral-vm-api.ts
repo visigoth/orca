@@ -2,6 +2,7 @@ import type { OrcaHooks } from '../../shared/orca-yaml-hook-types'
 import type { PublicKnownRuntimeEnvironment } from '../../shared/runtime-environments'
 import type { EphemeralVmRecipeDoctorResult } from '../../shared/ephemeral-vm-recipes'
 import type { EphemeralVmRecipeResultWarning } from '../../shared/ephemeral-vm-recipe-diagnostics'
+import type { EphemeralVmProvisionedWorkspaceTarget } from '../../shared/ephemeral-vm-host'
 import type { EphemeralVmRuntimeRecord } from '../../shared/ephemeral-vm-runtimes'
 
 export type EphemeralVmApi = {
@@ -51,6 +52,23 @@ export type EphemeralVmApi = {
       }
     | { ok: false; error: string; stderr: string; stdout: string }
   >
+  /**
+   * Provision AND register the checkout in one call, for a client that cannot run the two-step
+   * desktop flow: `provision` streams progress over IPC and hands back a local host id that only
+   * the desktop can register. Present only where the runtime does the work (the browser client),
+   * so callers feature-detect it rather than assume it.
+   *
+   * One call, not two, deliberately: a client that died between them would leave a booted
+   * environment nothing references.
+   */
+  provisionWorkspaceTarget?: (args: {
+    repoId: string
+    recipeId: string
+    workspaceName?: string
+    projectId?: string
+    branch?: string
+    ref?: string
+  }) => Promise<EphemeralVmProvisionedWorkspaceTarget>
   cancelProvision: (args: { provisionId: string }) => Promise<{ cancelled: boolean }>
   onProvisionEvent: (
     callback: (event: { provisionId: string; stream: 'stdout' | 'stderr'; chunk: string }) => void

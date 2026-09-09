@@ -8,7 +8,8 @@ const store = {
   pendingWorktreeCreations: {} as Record<string, PendingWorktreeCreation>,
   activePendingCreationId: 'creation-1',
   updatePendingWorktreeCreation: vi.fn(),
-  setupProjectExistingFolder: vi.fn()
+  setupProjectExistingFolder: vi.fn(),
+  fetchRepos: vi.fn()
 }
 
 vi.mock('@/store', () => ({ useAppStore: { getState: () => store } }))
@@ -45,14 +46,12 @@ it('carries the captured provisioned-root ref identity into adoption', async () 
     expectedRefHead: 'abc123',
     stderr: '',
     warnings: [],
-    setup: {
-      project: { id: 'project-1' },
-      setup: {
-        id: 'setup-runtime',
-        projectId: 'project-1',
-        hostId: 'ssh:runtime-ssh-runtime-1'
-      },
-      repo: { id: 'repo-runtime', path: '/workspace/repo' }
+    target: {
+      repoId: 'repo-runtime',
+      path: '/workspace/repo',
+      projectId: 'project-1',
+      projectHostSetupId: 'setup-runtime',
+      hostId: 'ssh:runtime-ssh-runtime-1'
     }
   })
 
@@ -84,4 +83,7 @@ it('carries the captured provisioned-root ref identity into adoption', async () 
     ephemeralVmCheckoutMode: 'provisioned-root',
     ephemeralVmExpectedRefHead: 'abc123'
   })
+  // A runtime registered the provisioned checkout host-side, so the repo the workspace is about
+  // to be created against is not in this client's catalog yet.
+  expect(store.fetchRepos).toHaveBeenCalled()
 })

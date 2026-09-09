@@ -152,6 +152,13 @@ export async function getRuntimeBackedStoredSettings(): Promise<GlobalSettings> 
     if (typeof result.settings.agentSkillSharingEnabled === 'boolean') {
       runtimeSettings.agentSkillSharingEnabled = result.settings.agentSkillSharingEnabled
     }
+    // Host-owned, and mirrored here rather than kept per browser: environment recipes are declared
+    // by the HOST's repos and plugins and their create hooks run there, so a browser-local value
+    // would either hide a feature the host offers or offer one it cannot run. Unlike the two
+    // sharing flags above this one is also SENT back — see syncRuntimeBackedSettings.
+    if (typeof result.settings.experimentalEphemeralVms === 'boolean') {
+      runtimeSettings.experimentalEphemeralVms = result.settings.experimentalEphemeralVms
+    }
     const next = mergeSettings(local, runtimeSettings)
     writeStoredSettings(next)
     return settingsForActiveVisibilityOwner(next)
@@ -197,6 +204,11 @@ export async function syncRuntimeBackedSettings(
   }
   if (typeof updates.compactWorktreeCards === 'boolean') {
     runtimeUpdates.compactWorktreeCards = updates.compactWorktreeCards
+  }
+  // Sent, not just mirrored: the host owns the flag, so a browser-local write would be reverted
+  // by the next settings read and the toggle would flip back on its own.
+  if (typeof updates.experimentalEphemeralVms === 'boolean') {
+    runtimeUpdates.experimentalEphemeralVms = updates.experimentalEphemeralVms
   }
   if (typeof updates.minimaxGroupId === 'string') {
     runtimeUpdates.minimaxGroupId = updates.minimaxGroupId

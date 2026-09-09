@@ -1,7 +1,11 @@
 import { z } from 'zod'
 import { defineMethod } from '../core'
 import { requiredString } from '../schemas'
-import { getEphemeralVmHost, type EphemeralVmHost } from '../../../../shared/ephemeral-vm-host'
+import {
+  getEphemeralVmHost,
+  type EphemeralVmHost,
+  type EphemeralVmProvisionedWorkspaceTarget
+} from '../../../../shared/ephemeral-vm-host'
 import {
   getEphemeralVmRecipeResultCheckoutMode,
   getEphemeralVmRecipeResultProjectRoot
@@ -174,7 +178,7 @@ export const EPHEMERAL_VM_METHODS = [
         path,
         ...(provisioned.expectedRefHead ? { expectedRefHead: provisioned.expectedRefHead } : {}),
         warnings: provisioned.warnings
-      }
+      } satisfies EphemeralVmProvisionedWorkspaceTarget
     }
   })
 ]
