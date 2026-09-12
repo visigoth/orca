@@ -1,3 +1,5 @@
+import { realpath } from 'node:fs/promises'
+import { join } from 'node:path'
 import type { CliInstallStatus } from '../../shared/cli-install-types'
 import { CliCommandInstallation } from './cli-command-installation'
 import { isWindowsUserPathPermissionError } from './cli-install-errors'
@@ -5,13 +7,26 @@ import { samePathEntry, splitPathEntries } from './cli-install-path-format'
 
 export class CliPathRegistration extends CliCommandInstallation {
   protected async probePathConfiguration(
-    pathDirectory: string
+    pathDirectory: string,
+    commandPath?: string | null
   ): Promise<{ configured: boolean | null; detail: string | null }> {
     if (this.platform !== 'win32') {
+      const entries = splitPathEntries(this.platform, this.processPathEnv ?? '')
+      if (entries.some((entry) => samePathEntry(this.platform, entry, pathDirectory))) {
+        return { configured: true, detail: null }
+      }
+      // Why: the question this answers is whether typing the command runs Orca, and the install
+      // directory being on PATH is only the most common way for that to be true. A packaged Linux
+      // image can put the same launcher on PATH itself -- /usr/local/bin/orca-ide symlinked to
+      // /opt/orca/resources/bin/orca-ide -- and reporting `pathConfigured: false` there is simply
+      // wrong: the command resolves. It is also load-bearing rather than cosmetic, because callers
+      // gate on it. Agent-skill setup treats a false here as "the Orca CLI is missing" and shows
+      // its setup prompt forever, on a host where the CLI works.
+      //
+      // Resolved through symlinks and compared against our own command, so an unrelated binary of
+      // the same name stays what it is today: not ours, and not configured.
       return {
-        configured: splitPathEntries(this.platform, this.processPathEnv ?? '').some((entry) =>
-          samePathEntry(this.platform, entry, pathDirectory)
-        ),
+        configured: await this.isCommandResolvableOnPath(entries, commandPath),
         detail: null
       }
     }
@@ -151,5 +166,37 @@ export class CliPathRegistration extends CliCommandInstallation {
         { cause: error }
       )
     }
+  }
+
+  /** True when some PATH entry provides this command and resolves to the same file we manage. */
+  private async isCommandResolvableOnPath(
+    pathEntries: string[],
+    commandPath: string | null | undefined
+  ): Promise<boolean> {
+    if (!commandPath) {
+      return false
+    }
+    const ownTarget = await resolveRealPath(commandPath)
+    if (!ownTarget) {
+      return false
+    }
+    for (const entry of pathEntries) {
+      if (!entry) {
+        continue
+      }
+      const candidate = await resolveRealPath(join(entry, this.commandName))
+      if (candidate && candidate === ownTarget) {
+        return true
+      }
+    }
+    return false
+  }
+}
+
+async function resolveRealPath(candidate: string): Promise<string | null> {
+  try {
+    return await realpath(candidate)
+  } catch {
+    return null
   }
 }

@@ -97,7 +97,7 @@ export class CliInstaller extends CliPathRegistration {
           }
         : inspectedStatus
     const pathDirectory = dirname(spec.commandPath)
-    const pathProbe = await this.probePathConfiguration(pathDirectory)
+    const pathProbe = await this.probePathConfiguration(pathDirectory, spec.commandPath)
     return this.withPathInfo(baseStatus, pathDirectory, pathProbe)
   }
 
