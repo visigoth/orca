@@ -4,6 +4,8 @@
 import { randomUUID } from 'node:crypto'
 import type { BrowserWindow } from 'electron'
 import { deployAndLaunchRelay } from './ssh-relay-deploy'
+import { materializeManagedClaudeCredentials } from './ssh-managed-claude-credentials'
+import { resolveActiveManagedCredentialsPath } from './ssh-managed-claude-credentials-source'
 import { execCommand } from './ssh-relay-deploy-helpers'
 import { writeStringsViaSftp } from './sftp-upload'
 import { isRelayVersionMismatchError } from './ssh-relay-version-mismatch-error'
@@ -551,6 +553,13 @@ export class SshRelaySession {
             }
           : null
 
+      // Why: an SSH workspace is the one runtime the managed-account machinery cannot reach --
+      // host and WSL agents get an account by having CLAUDE_CONFIG_DIR set on a process this app
+      // spawns, and this agent is spawned on the far side of the relay. Awaited rather than fired
+      // off, because the agent can start immediately after establish and racing it hands the first
+      // session a login prompt; best-effort, because a logged-out workspace beats a failed connect.
+      await this.materializeManagedClaudeAccount(conn, remoteHome, nodePath)
+
       // Why: dispose() can fire during the await above; if it did, creating a mux/providers now would leak with no owner to dispose them.
       if (this.isDisposed()) {
         const orphanMux = new SshChannelMultiplexer(transport)
@@ -703,6 +712,11 @@ export class SshRelaySession {
               pathDelimiter: hostPlatform.pathDelimiter
             }
           : null
+
+      // Why: the reconnect path needs this as much as the first connect -- a workspace that
+      // reconnects after the remote lost its credentials would otherwise stay logged out until the
+      // next full establish. Same best-effort contract as above.
+      await this.materializeManagedClaudeAccount(conn, remoteHome, nodePath)
 
       if (abortController.signal.aborted || this.isDisposed()) {
         // Why: relay is already running remotely — a throwaway mux we immediately dispose sends a clean shutdown so it doesn't linger until grace expires.
@@ -1210,6 +1224,39 @@ export class SshRelaySession {
     return serverBuildId && recovery?.serverBuildId === serverBuildId
       ? (recovery?.owner ?? null)
       : null
+  }
+
+  /** Push the runtime's managed Claude account into this remote, when there is one to push. */
+  private async materializeManagedClaudeAccount(
+    conn: SshConnection,
+    remoteHome: string | undefined,
+    nodePath: string | undefined
+  ): Promise<void> {
+    const hostPlatform = this.hostPlatform
+    if (!hostPlatform || !remoteHome) {
+      return
+    }
+    const outcome = await materializeManagedClaudeCredentials({
+      hostPlatform,
+      remoteNodePath: nodePath,
+      execRemote: (command) =>
+        execCommand(conn, command, { wrapCommand: !isWindowsRemoteHost(hostPlatform) }),
+      // Why openFileUploadSession and not sftp directly: it is the one upload path that works for
+      // both transports, including a connection using the system ssh binary, where there is no
+      // SFTPWrapper to hand anyone.
+      uploadFile: async (localPath, remotePath) => {
+        const upload = await conn.openFileUploadSession({ hostPlatform })
+        try {
+          await upload.uploadFile(localPath, remotePath)
+        } finally {
+          await upload.close()
+        }
+      },
+      resolveManagedCredentialsPath: resolveActiveManagedCredentialsPath
+    })
+    if (outcome === 'written') {
+      console.log(`[ssh-claude-auth] ${this.targetId}: managed Claude account applied`)
+    }
   }
 
   private async openPtyConsumerSession(

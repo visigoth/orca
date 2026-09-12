@@ -1,3 +1,5 @@
+import { setManagedClaudeCredentialsSource } from '../ssh/ssh-managed-claude-credentials-source'
+import { resolveActiveManagedClaudeCredentialsPath } from '../claude-accounts/active-managed-credentials-path'
 import { app } from 'electron'
 import { RateLimitService } from '../rate-limits/service'
 import { CodexRuntimeHomeService } from '../codex-accounts/runtime-home-service'
@@ -66,6 +68,14 @@ export function initializeMainProcessAccountServices(): void {
   state.codexSessionMigration.scheduleInitialRun()
   state.claudeRuntimeAuth = new ClaudeRuntimeAuthService(store)
   state.claudeAccounts = new ClaudeAccountService(store, state.rateLimits, state.claudeRuntimeAuth)
+  // Why: SSH workspaces cannot be reached the way host and WSL agents are. Those get a managed
+  // account by having CLAUDE_CONFIG_DIR set on a process this app spawns; an agent behind the relay
+  // is spawned on the far side, so without this a host holding a perfectly good account still opens
+  // every remote workspace logged out. The SSH layer reads the account through this seam.
+  setManagedClaudeCredentialsSource({
+    resolveActiveManagedCredentialsPath: async () =>
+      resolveActiveManagedClaudeCredentialsPath(store.getSettings().activeClaudeManagedAccountId)
+  })
   state.rateLimits.setCodexHomePathResolver((target) =>
     state.codexRuntimeHome!.prepareForRateLimitFetch(target)
   )
