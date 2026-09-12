@@ -74,7 +74,13 @@ export function initializeMainProcessAccountServices(): void {
   // every remote workspace logged out. The SSH layer reads the account through this seam.
   setManagedClaudeCredentialsSource({
     resolveActiveManagedCredentialsPath: async () =>
-      resolveActiveManagedClaudeCredentialsPath(store.getSettings().activeClaudeManagedAccountId)
+      resolveActiveManagedClaudeCredentialsPath({
+        activeAccountId: store.getSettings().activeClaudeManagedAccountId,
+        // Why the list too: selecting an account is a Settings-UI action with no CLI equivalent, so
+        // on a headless host `orca account add` leaves the selection null forever. One registered
+        // account and no selection is not ambiguous.
+        registeredAccountIds: (state.claudeAccounts?.listAccounts().accounts ?? []).map((a) => a.id)
+      })
   })
   state.rateLimits.setCodexHomePathResolver((target) =>
     state.codexRuntimeHome!.prepareForRateLimitFetch(target)
