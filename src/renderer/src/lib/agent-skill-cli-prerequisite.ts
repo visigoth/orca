@@ -14,7 +14,33 @@ export const CLI_PREREQUISITE_REGISTRATION_TOAST = 'Orca needs to register its C
 export const CLI_PREREQUISITE_REGISTRATION_TOAST_DESCRIPTION =
   'Approve the system prompt so skill setup can use the Orca CLI command.'
 
+/**
+ * True when this client has no CLI of its own to register, so it cannot judge whether one is
+ * missing.
+ *
+ * The web client is the case that matters: its `cli` API is a fixed stub reporting
+ * `state: 'unsupported'`, and its own detail says why -- "CLI registration is managed on the Orca
+ * server, not in the web browser." Every caller below gates on availability, so a browser session
+ * concluded the CLI was missing on a server where it is installed and on PATH, and said so
+ * forever. Nothing the user could do would clear it, because the answer never came from the
+ * machine that has the CLI.
+ *
+ * `commandPath === null` is what separates this from a dev build, which reports the same
+ * `launch_mode_unavailable` reason but still names the path it would install to -- there the
+ * prompt is actionable and should stay.
+ */
+export function isCliRegistrationManagedOffClient(
+  status: CliInstallStatus | null | undefined
+): boolean {
+  return status?.unsupportedReason === 'launch_mode_unavailable' && status.commandPath === null
+}
+
 export function isOrcaCliAvailableOnPath(status: CliInstallStatus | null | undefined): boolean {
+  // Not "available" in the sense of verified -- unasked. The question belongs to the host the
+  // agents actually run on, and a client that cannot host the CLI has no standing to answer it.
+  if (isCliRegistrationManagedOffClient(status)) {
+    return true
+  }
   return status?.state === 'installed' && status.pathConfigured === true
 }
 
