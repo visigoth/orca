@@ -251,6 +251,12 @@ export const MOBILE_RPC_METHOD_ALLOWLIST = new Set([
   'ui.recordFeatureInteraction',
   'ui.set',
   'worktree.activate',
+  // Per-workspace environments, for the mobile run-target picker. Without these three the picker
+  // lists recipes it cannot use: the allowlist is checked before dispatch, so the calls fail at
+  // runtime on a build where everything compiled.
+  'vm.attachWorkspace',
+  'vm.listRecipes',
+  'vm.provisionWorkspaceTarget',
   'worktree.create',
   'worktree.forceDeleteBranch',
   'worktree.listRetiredNames',
