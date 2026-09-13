@@ -33,6 +33,8 @@ export function NewWorktreeModalDrawers(props: {
   projectPickerItems: NewWorkspaceProjectOption<MobileWorkspaceRepo>[]
   selectedProjectId: string | null
   runTargetPickerItems: NewWorkspaceRunTargetOption<MobileWorkspaceRepo>[]
+  selectedRunTargetId: string
+  onRunTargetChange: (option: NewWorkspaceRunTargetOption<MobileWorkspaceRepo>) => void
   pickerAgentOptions: NewWorktreeAgentOption[]
   selectedAgent: NewWorktreeAgentOption
   setupTrustPrompt: SetupTrustPrompt | null
@@ -85,8 +87,10 @@ export function NewWorktreeModalDrawers(props: {
         visible={props.visible && props.drawerView === 'runTarget'}
         title="Run on"
         items={props.runTargetPickerItems}
-        selectedId={props.selectedRepo?.id ?? ''}
-        onSelect={(item) => props.onRepoChange(item.repo)}
+        // Why not the repo id: the host option and every recipe option share one repo, so the repo
+        // id would mark them all selected at once.
+        selectedId={props.selectedRunTargetId}
+        onSelect={(item) => props.onRunTargetChange(item)}
         onClose={props.onTransitionToForm}
         renderIcon={() => <Monitor size={16} color={colors.textMuted} />}
       />

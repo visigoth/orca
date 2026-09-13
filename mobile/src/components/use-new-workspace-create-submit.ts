@@ -26,6 +26,11 @@ import type { MobileWorkspaceRepo, SetupRunPolicy } from './new-worktree-modal-t
 import type { SetupTrustPrompt } from './SetupHookTrustDrawer'
 import type { NewWorktreeDrawerView } from './use-new-worktree-drawer-navigation'
 import { getSuggestedCreatureName } from './worktree-name-suggestion'
+import {
+  attachRecipeRuntimeToWorkspace,
+  provisionRecipeTarget,
+  type ProvisionedRecipeTarget
+} from '../tasks/workspace-create-recipe-target'
 
 type CreateOptions = {
   setupOverride?: Exclude<WorkspaceCreateSetupDecision, 'inherit'>
@@ -37,6 +42,8 @@ type Composer = ReturnType<typeof useMobileComposerSource>
 export function useNewWorkspaceCreateSubmit(args: {
   client: RpcClient | null
   selectedRepo: MobileWorkspaceRepo | null
+  /** Set when the chosen run target provisions a per-workspace environment instead of using a host. */
+  selectedRecipeId?: string | null
   selectedAgent: NewWorktreeAgentOption
   setSelectedAgent: (agent: NewWorktreeAgentOption) => void
   setAgentOverridden: (overridden: boolean) => void
@@ -150,6 +157,20 @@ export function useNewWorkspaceCreateSubmit(args: {
         return
       }
 
+      // Why before create and not after: provisioning yields the repo id the workspace must be
+      // created against, and resolving it first means a provisioning failure aborts before any
+      // workspace state is written.
+      let provisioned: ProvisionedRecipeTarget | null = null
+      if (args.selectedRecipeId) {
+        provisioned = await provisionRecipeTarget({
+          client,
+          repoId: selectedRepo.id,
+          recipeId: args.selectedRecipeId,
+          workspaceName: baseName
+        })
+      }
+      const createRepoId = provisioned?.repoId ?? selectedRepo.id
+
       const createdWithAgentId =
         args.selectedAgent.id !== '__blank__' ? args.selectedAgent.id : undefined
       const trimmedNote = args.note.trim() || undefined
@@ -158,7 +179,7 @@ export function useNewWorkspaceCreateSubmit(args: {
         ? await createWorkspaceFromComposerSource({
             client,
             selection,
-            targetRepoId: selectedRepo.id,
+            targetRepoId: createRepoId,
             setupDecision,
             agent: { choice: normalizeWorkspaceAgent(args.selectedAgent.id) ?? 'blank' },
             workspaceName: trimmedName || undefined,
@@ -168,7 +189,7 @@ export function useNewWorkspaceCreateSubmit(args: {
           })
         : await createBlankWorkspace({
             client,
-            repoId: selectedRepo.id,
+            repoId: createRepoId,
             baseName,
             nameWasGenerated: !trimmedName,
             createdWithAgentId,
@@ -180,6 +201,14 @@ export function useNewWorkspaceCreateSubmit(args: {
         args.setError(result.error)
         return
       }
+      // Non-fatal, but not optional: without it the environment outlives the workspace, leaving a
+      // container running and a runtime row that later makes repo selectors ambiguous.
+      await attachRecipeRuntimeToWorkspace({
+        client,
+        provisioned,
+        workspaceId: result.worktreeId,
+        onWarning: (message) => args.setError(message)
+      })
       args.onClose()
       args.onCreated(result.worktreeId, result.name)
     } catch (error) {

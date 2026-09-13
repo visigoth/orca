@@ -12,6 +12,7 @@ import {
   useRetiredWorktreeNames
 } from '../worktree/use-retired-worktree-names'
 import { BottomDrawerModalHost } from './bottom-drawer-modal-host'
+import { useNewWorkspaceRecipes } from './use-new-workspace-recipes'
 import {
   getMobileWorkspaceRepoBadgeColor,
   type MobileWorkspaceRepo,
@@ -20,7 +21,8 @@ import {
 import {
   buildNewWorkspaceProjectOptions,
   buildNewWorkspaceRunTargetOptions,
-  getNewWorkspaceRunTarget
+  getNewWorkspaceRunTarget,
+  type NewWorkspaceRunTargetOption
 } from './new-workspace-project-targets'
 import { NewWorktreeFormSheet } from './NewWorktreeFormSheet'
 import { NewWorktreeModalDrawers } from './NewWorktreeModalDrawers'
@@ -64,6 +66,11 @@ function NewWorktreeModalContent(props: NewWorktreeModalProps) {
   })
   const navigation = useNewWorktreeDrawerNavigation(visible)
   const [note, setNote] = useState('')
+  // Why a separate id and not just the repo: one repo now yields several run targets (the host it
+  // already runs on, plus one per recipe), so the repo alone cannot say which is selected. The
+  // recipe is held beside it rather than parsed back out of the id, so the id stays an opaque key.
+  const [selectedRunTargetId, setSelectedRunTargetId] = useState<string | null>(null)
+  const [selectedRecipeId, setSelectedRecipeId] = useState<string | null>(null)
   const [error, setError] = useState('')
   const runtime = useNewWorkspaceRuntimeContext(client, visible, hostId)
   const { tasksSupported, hostPlatform, getWorktreeCreateCutoverSupport } =
@@ -100,6 +107,7 @@ function NewWorktreeModalContent(props: NewWorktreeModalProps) {
     retiredNamesRefreshKey
   )
   const createSubmit = useNewWorkspaceCreateSubmit({
+    selectedRecipeId,
     client,
     selectedRepo,
     selectedAgent: agentSelection.selectedAgent,
@@ -149,12 +157,24 @@ function NewWorktreeModalContent(props: NewWorktreeModalProps) {
   const selectedProjectId = selectedRepo ? getProjectIdentityKey(selectedRepo) : null
   const selectedProject =
     projectPickerItems.find((project) => project.id === selectedProjectId) ?? null
+  // Why the selected repo and not the project: recipes are answered by the machine that owns the
+  // checkout, and provisioning starts from that same tree.
+  const recipes = useNewWorkspaceRecipes({
+    client,
+    repoId: selectedRepo?.id ?? null,
+    enabled: visible
+  })
   const runTargetPickerItems = useMemo(
-    () => buildNewWorkspaceRunTargetOptions(repos, selectedProjectId, hostPlatform),
-    [hostPlatform, repos, selectedProjectId]
+    () => buildNewWorkspaceRunTargetOptions(repos, selectedProjectId, hostPlatform, recipes),
+    [hostPlatform, recipes, repos, selectedProjectId]
   )
+  const selectedRecipe = selectedRecipeId
+    ? recipes.find((recipe) => recipe.id === selectedRecipeId)
+    : undefined
   const selectedRunTarget = selectedRepo
-    ? getNewWorkspaceRunTarget(selectedRepo, hostPlatform)
+    ? selectedRecipe
+      ? { label: selectedRecipe.name || selectedRecipe.id, detail: 'Per-workspace environment' }
+      : getNewWorkspaceRunTarget(selectedRepo, hostPlatform)
     : null
   const needsSetupChoice = Boolean(setupScript.setupCommand) && setupScript.setupRunPolicy === 'ask'
   const canCreate =
@@ -163,6 +183,12 @@ function NewWorktreeModalContent(props: NewWorktreeModalProps) {
     !executionTarget.sshGate.requiresConnection &&
     (!needsSetupChoice || setupScript.setupDecisionChoice != null)
 
+  function selectRunTarget(option: NewWorkspaceRunTargetOption<MobileWorkspaceRepo>): void {
+    setSelectedRunTargetId(option.id)
+    setSelectedRecipeId(option.recipeId ?? null)
+    selectRepo(option.repo, true)
+  }
+
   function openPicker(view: 'project' | 'runTarget' | 'agent'): void {
     Keyboard.dismiss()
     navigation.transitionDrawer(view)
@@ -170,6 +196,12 @@ function NewWorktreeModalContent(props: NewWorktreeModalProps) {
 
   function selectRepo(repo: MobileWorkspaceRepo, clearRepoScopedSource: boolean): void {
     const repoChanged = repo.id !== selectedRepo?.id
+    if (repoChanged) {
+      // Why: recipes belong to the repo that answered for them, so carrying one across a repo
+      // change would provision from a tree that never offered it.
+      setSelectedRecipeId(null)
+      setSelectedRunTargetId(null)
+    }
     setSelectedRepo(repo)
     if (
       clearRepoScopedSource &&
@@ -243,6 +275,8 @@ function NewWorktreeModalContent(props: NewWorktreeModalProps) {
         projectPickerItems={projectPickerItems}
         selectedProjectId={selectedProjectId}
         runTargetPickerItems={runTargetPickerItems}
+        selectedRunTargetId={selectedRunTargetId ?? selectedRepo?.id ?? ''}
+        onRunTargetChange={selectRunTarget}
         pickerAgentOptions={agentSelection.pickerAgentOptions}
         selectedAgent={agentSelection.selectedAgent}
         setupTrustPrompt={createSubmit.setupTrustPrompt}
