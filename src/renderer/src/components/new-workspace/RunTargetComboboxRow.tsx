@@ -27,6 +27,7 @@ export function RunTargetRow({
   dimmed = false,
   submenu = false,
   stacked = false,
+  detailLines = 1,
   onArm,
   onCommit,
   trailing
@@ -43,6 +44,11 @@ export function RunTargetRow({
   submenu?: boolean
   /** Two-line card: label over description, for rows that need explaining. */
   stacked?: boolean
+  /**
+   * How many lines the stacked detail may use. A fixed hint fits on one; a recipe's description is
+   * a sentence its author wrote, and one line truncates it mid-thought. Ignored when not stacked.
+   */
+  detailLines?: 1 | 2
   onArm: () => void
   onCommit: () => void
   trailing?: React.ReactNode
@@ -80,7 +86,14 @@ export function RunTargetRow({
       {stacked ? (
         <span className="flex min-w-0 flex-1 flex-col">
           <span className={cn('truncate', current && 'font-medium')}>{label}</span>
-          <span className="truncate text-xs text-muted-foreground">{detail}</span>
+          <span
+            className={cn(
+              'text-xs text-muted-foreground',
+              detailLines === 2 ? 'line-clamp-2' : 'truncate'
+            )}
+          >
+            {detail}
+          </span>
         </span>
       ) : (
         <>

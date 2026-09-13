@@ -44,9 +44,23 @@ export function getRecipeDestroyLabel(recipe: EphemeralVmRecipeOption): string {
   return translate('auto.components.NewWorkspaceComposerCard.noDestroyConfigured', 'no destroy')
 }
 
-/** One line under a recipe name: what it runs and whether it tears down. */
+/**
+ * The line under a recipe name: the author's own description when there is one.
+ *
+ * Why not the create command, which is what this used to show: it is a script path, and a repo
+ * whose recipes all dispatch through a single script renders the identical string on every row —
+ * spending the line on the one thing that cannot tell two recipes apart. `description` is the only
+ * per-recipe prose a recipe has, and until now it was searchable but never displayed.
+ */
 export function getRecipeDetail(recipe: EphemeralVmRecipeOption): string {
-  return `${getRecipeCommandDisplay(recipe.create)} · ${getRecipeDestroyLabel(recipe)}`
+  const description = recipe.description?.trim()
+  if (!description) {
+    return `${getRecipeCommandDisplay(recipe.create)} · ${getRecipeDestroyLabel(recipe)}`
+  }
+  // Keep the teardown warning, drop the reassurance. A recipe that leaves its environment running
+  // is worth saying on the row; "destroy configured" only crowds out the description.
+  const tearsDown = Boolean(recipe.destroy) && !recipe.destroyDisabled
+  return tearsDown ? description : `${description} · ${getRecipeDestroyLabel(recipe)}`
 }
 
 function matches(haystack: string, query: string): boolean {
