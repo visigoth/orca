@@ -82,6 +82,9 @@ jobs:
       - name: Test TestFlight lane arguments
         run: ruby fastlane/fastfile_testflight_arguments_test.rb
 
+      - name: Test release identity resolution
+        run: ruby fastlane/release_identity_test.rb
+
       # Why: nothing else in CI loads the Fastfile, so a syntax error, a broken
       # require, or an undefined constant only surfaces mid-release — the
       # ios-distribute job failed every run for six days that way. `lanes` just

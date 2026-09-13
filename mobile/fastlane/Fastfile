@@ -18,6 +18,7 @@
 require "base64"
 require "json"
 require_relative "ios_release_version"
+require_relative "release_identity"
 
 default_platform(:ios)
 
@@ -28,8 +29,10 @@ APP_CONFIG_PATH = File.join(MOBILE_ROOT, "app.json")
 WORKSPACE = File.join(MOBILE_ROOT, "ios", "Orca.xcworkspace")
 BUILD_OUTPUT_DIRECTORY = File.join(MOBILE_ROOT, "build")
 SCHEME = "Orca"
-BUNDLE_ID = "com.stably.orca.mobile"
-TESTFLIGHT_GROUPS = ["peeps"].freeze
+# Env-overridable, because a fork can build this app but can never upload to upstream's App Store
+# record. Unset leaves the upstream release byte-identical; see release_identity.rb.
+BUNDLE_ID = ReleaseIdentity.bundle_id
+TESTFLIGHT_GROUPS = ReleaseIdentity.testflight_groups
 DEFAULT_TESTFLIGHT_CHANGELOG = "Latest Orca Mobile updates and fixes.".freeze
 TESTFLIGHT_PROCESSING_TIMEOUT_SECONDS = 20 * 60
 
@@ -175,6 +178,11 @@ platform :ios do
     # the native project and runtime manifest used by the About screen.
     config.fetch("expo")["version"] = version
     config.fetch("expo").fetch("ios")["buildNumber"] = build_number.to_s
+    # Why the bundle id is stamped here too: `expo prebuild` runs between this lane and the
+    # archive and regenerates the native project from app.json. A bundle id that lived only in the
+    # Fastfile would fetch a profile for one app and then archive a different one, which fails at
+    # export as a signing mismatch rather than as the configuration error it actually is.
+    config.fetch("expo").fetch("ios")["bundleIdentifier"] = BUNDLE_ID
     write_mobile_app_config(config)
 
     UI.message("Prepared Orca Mobile iOS #{version} (#{build_number})")
@@ -246,7 +254,7 @@ platform :ios do
     unless missing_groups.empty?
       UI.user_error!(
         "Missing TestFlight group(s): #{missing_groups.join(', ')}. " \
-        "Create them in App Store Connect or update TESTFLIGHT_GROUPS.",
+        "Create them in App Store Connect or set the TESTFLIGHT_GROUPS env var.",
       )
     end
 

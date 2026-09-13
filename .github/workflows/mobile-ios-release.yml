@@ -39,6 +39,10 @@ jobs:
       # drift into a setup failure instead of two different fastlane versions in
       # one release.
       BUNDLE_FROZEN: 'true'
+      # Which app this release signs and uploads to. Unset on upstream, where it expands to "" and
+      # the Fastfile keeps com.stably.orca.mobile; a fork sets the repository variable to its own
+      # bundle id, since it cannot upload to upstream's App Store record.
+      IOS_BUNDLE_IDENTIFIER: ${{ vars.IOS_BUNDLE_IDENTIFIER }}
 
     outputs:
       release_version: ${{ steps.release_metadata.outputs.version }}
@@ -160,6 +164,10 @@ jobs:
     env:
       # Same fastlane as ios-build, or fail before touching App Store Connect.
       BUNDLE_FROZEN: 'true'
+      # Must match ios-build: this job looks the app up again by bundle id. Beta groups belong to
+      # that app, so a fork's app needs its own (comma-separated) group names.
+      IOS_BUNDLE_IDENTIFIER: ${{ vars.IOS_BUNDLE_IDENTIFIER }}
+      TESTFLIGHT_GROUPS: ${{ vars.TESTFLIGHT_GROUPS }}
 
     defaults:
       run:
