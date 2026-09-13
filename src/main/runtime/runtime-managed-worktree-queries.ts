@@ -31,6 +31,8 @@ import { listRuntimeFolderWorkspaces } from './runtime-worktree-filesystem'
 import type { ResolvedWorktree } from './runtime-worktree-path-identity'
 import { resolveConfiguredWorktreeBasePaths } from '../../shared/worktree/configured-worktree-base-path'
 import { getRetiredNameRegistryForRepo } from '../worktree-name-retirement'
+import type { EphemeralVmRuntimeRecord } from '../../shared/ephemeral-vm-runtimes'
+import { listManagedWorktreeRows } from './runtime-managed-worktree-listing'
 
 type Dependencies = {
   getStore(): RuntimeStore | null
@@ -38,6 +40,12 @@ type Dependencies = {
   resolveRepo(selector: string): Promise<Repo>
   selectRepos(selector: string): Repo[]
   scanRepo(repo: Repo): Promise<RuntimeWorktreeScanResult>
+  /**
+   * Provisioned per-workspace environments, used to recognise the second repo row a recipe
+   * creates for a checkout that is already tracked. Optional so a host without the ephemeral-VM
+   * feature keeps listing exactly as before.
+   */
+  listProvisionedRuntimes?(): readonly EphemeralVmRuntimeRecord[]
 }
 
 /**
@@ -73,38 +81,15 @@ export class RuntimeManagedWorktreeQueries {
     limit: number,
     sourceDefaultsSupported = true
   ): Promise<RuntimeWorktreeListResult> {
-    if (!Number.isInteger(limit) || limit <= 0) {
-      throw new Error('invalid_limit')
-    }
-    const resolved = await this.deps.listResolved()
-    const repoId = repoSelector ? (await this.deps.resolveRepo(repoSelector)).id : null
-    const pathsByRepo = new Map<string, string[]>()
-    for (const worktree of resolved) {
-      const paths = pathsByRepo.get(worktree.repoId) ?? []
-      paths.push(worktree.path)
-      pathsByRepo.set(worktree.repoId, paths)
-    }
-    const visibilityDefaults = this.visibilityDefaults(sourceDefaultsSupported)
-    const matchers = new Map(
-      (this.deps.getStore()?.getRepos() ?? []).map((repo) => [
-        repo.id,
-        createWorktreeVisibilitySourceMatcher(
-          [repo.path, ...(pathsByRepo.get(repo.id) ?? [])],
-          resolveCustomWorktreeVisibilitySources(repo, visibilityDefaults),
-          resolveConfiguredWorktreeBasePaths(repo)
-        )
-      ])
-    )
-    const worktrees = resolved.filter(
-      (worktree) =>
-        (!repoId || worktree.repoId === repoId) &&
-        this.isVisible(worktree, matchers.get(worktree.repoId), sourceDefaultsSupported)
-    )
-    return {
-      worktrees: worktrees.slice(0, limit),
-      totalCount: worktrees.length,
-      truncated: worktrees.length > limit
-    }
+    return listManagedWorktreeRows({
+      limit,
+      repoId: repoSelector ? (await this.deps.resolveRepo(repoSelector)).id : null,
+      resolved: await this.deps.listResolved(),
+      repos: this.deps.getStore()?.getRepos() ?? [],
+      visibilityDefaults: this.visibilityDefaults(sourceDefaultsSupported),
+      isVisible: (worktree, matcher) => this.isVisible(worktree, matcher, sourceDefaultsSupported),
+      listProvisionedRuntimes: this.deps.listProvisionedRuntimes?.bind(this.deps)
+    })
   }
 
   resolveRepoForConnection(selector: string, connectionId?: string | null): Promise<Repo> {

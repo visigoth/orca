@@ -7,6 +7,9 @@ import { buildCliWorkspaceProvenance } from '../../../../shared/cli-workspace-pr
 import type { ExecutionHostId } from '../../../../shared/execution-host'
 import { displayNameUpdatePinsLabel } from '../../../../shared/worktree/display-name-provenance'
 import { tearDownEphemeralVmForWorkspace } from './ephemeral-vm-teardown'
+import { getEphemeralVmHost } from '../../../../shared/ephemeral-vm-host'
+import type { EphemeralVmRuntimeRecord } from '../../../../shared/ephemeral-vm-runtimes'
+import { provisionedWorkspaceIdsForRemovedWorktree } from '../../../../shared/worktree/provisioned-worktree-pairing'
 import { defineMethod, type RpcMethod } from '../core'
 import { buildManagedWorktreeCreateArgs } from './worktree-create-args'
 import { resolvePairedCallerHostId } from './paired-caller-host-id'
@@ -256,6 +259,18 @@ export const WORKTREE_METHODS: RpcMethod[] = [
           workspaceId: removed.id,
           ...(resolvedHostId ? { executionHostId: resolvedHostId as ExecutionHostId } : {})
         })
+        // A recipe-backed checkout is tracked by two repo rows, and the runtime records only the
+        // provisioned one. Deleting the OTHER row matched nothing above, so the container stayed
+        // up with its workspace directory deleted from under it -- which then presented as a
+        // workspace that would not open. Tear the environment down whichever row was removed.
+        const runtimes = (getEphemeralVmHost()?.listRuntimes() ??
+          []) as readonly EphemeralVmRuntimeRecord[]
+        for (const workspaceId of provisionedWorkspaceIdsForRemovedWorktree(
+          { id: removed.id, repoId: removed.repoId, path: removed.path },
+          runtimes
+        )) {
+          await tearDownEphemeralVmForWorkspace({ workspaceId })
+        }
       }
       return { removed: true, ...result }
     }

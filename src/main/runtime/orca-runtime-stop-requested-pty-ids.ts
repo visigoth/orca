@@ -1,4 +1,6 @@
 // @ts-nocheck -- mechanically split from OrcaRuntimeService; behavior is covered by AST equivalence and characterization tests.
+import { getEphemeralVmHost } from '../../shared/ephemeral-vm-host'
+import type { EphemeralVmRuntimeRecord } from '../../shared/ephemeral-vm-runtimes'
 import { OrcaRuntimeWithRuntimeId } from './orca-runtime-runtime-id'
 import { RuntimeTerminalAgentPresence } from './runtime-terminal-agent-presence'
 import type { RuntimeNotifier } from './runtime-notifier-contract'
@@ -136,7 +138,11 @@ export class OrcaRuntimeWithStopRequestedPtyIds extends OrcaRuntimeWithRuntimeId
     listResolved: () => this.listResolvedWorktrees(),
     resolveRepo: (selector) => this.resolveRepoSelector(selector),
     selectRepos: (selector) => this.selectReposBySelector(selector),
-    scanRepo: (repo) => this.listRepoWorktreesForResolution(repo)
+    scanRepo: (repo) => this.listRepoWorktreesForResolution(repo),
+    // Why through the registry rather than a stored reference: the ephemeral-VM host is installed
+    // after this runtime is constructed, and is absent entirely on builds without the feature.
+    listProvisionedRuntimes: () =>
+      (getEphemeralVmHost()?.listRuntimes() ?? []) as readonly EphemeralVmRuntimeRecord[]
   })
 
   protected readonly ptyForegroundAgent = new RuntimePtyForegroundAgent({
