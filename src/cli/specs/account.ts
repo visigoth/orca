@@ -20,6 +20,21 @@ export const ACCOUNT_COMMAND_SPECS: CommandSpec[] = [
     examples: ['orca account add', 'orca account add --agent codex']
   },
   {
+    path: ['account', 'select'],
+    summary: 'Choose which managed account this Orca host uses',
+    usage: 'orca account select --account <email-or-id> [--agent claude|codex] [--json]',
+    allowedFlags: [...GLOBAL_FLAGS, 'agent', 'account'],
+    notes: [
+      'Selecting an account was previously only possible in the desktop Settings UI, so a headless host left the selection empty however many accounts it had registered.',
+      'That is load-bearing rather than cosmetic: the path that refreshes a managed OAuth token before handing it to an agent does nothing when no account is selected, so the token expires in place and workspaces open logged out.',
+      '--account accepts the email shown by `orca account list` or the account id. --agent defaults to claude.'
+    ],
+    examples: [
+      'orca account select --account you@example.com',
+      'orca account select --account you@example.com --agent codex'
+    ]
+  },
+  {
     path: ['account', 'list'],
     summary: 'List managed Claude and Codex accounts on this Orca host',
     usage: 'orca account list [--json]',

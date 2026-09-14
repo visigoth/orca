@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import type { CommandHandler, HandlerContext } from '../dispatch'
 import { printResult } from '../format'
+import { runAccountSelect } from './account-select'
 import { RuntimeClientError } from '../runtime-client'
 import { stripElectronRunAsNode } from '../runtime/launch'
 import {
@@ -297,7 +298,7 @@ async function assertAccountImportSupported({ client }: HandlerContext): Promise
   }
 }
 
-/** CLI handlers for `orca account add [--agent claude|codex]` and `orca account list`. */
+/** CLI handlers for `orca account add [--agent claude|codex]` `orca account list`, and `orca account select`. */
 export const ACCOUNT_HANDLERS: Record<string, CommandHandler> = {
   'account add': async (ctx) => {
     const agentFlag = ctx.flags.get('agent')
@@ -322,6 +323,7 @@ export const ACCOUNT_HANDLERS: Record<string, CommandHandler> = {
     await ctx.client.call('accounts.list', { refreshUsage: false })
     await (agent === 'claude' ? addClaudeAccount(ctx) : addCodexAccount(ctx))
   },
+  'account select': runAccountSelect,
   'account list': async (ctx) => {
     rejectRemoteSelectionFlags(ctx, 'orca account list')
     const { client, json } = ctx

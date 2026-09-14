@@ -173,6 +173,7 @@ function formatCommandFlagHelp(flag: string, commandPath: string[]): string {
 export function formatFlagHelp(flag: string): string {
   const helpByFlag: Record<string, string> = {
     agent: '--agent <id>          Launch a known TUI agent in the first terminal',
+    account: '--account <value>     Managed account, by email or id (see `orca account list`)',
     'base-branch': '--base-branch <ref>    Base branch/ref to create the worktree from',
     runtime: '--runtime <id>        Provisioned environment id, from `orca vm runtime list`',
     recipe: '--recipe <id>         Provision a per-workspace environment recipe and create there',

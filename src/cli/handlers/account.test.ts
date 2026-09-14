@@ -55,6 +55,7 @@ vi.mock('../../shared/windows-console-input', () => ({
   stdioForWindowsInteractiveChild: stdioForWindowsInteractiveChildMock
 }))
 
+import { resolveManagedAccountId } from './account-select'
 import { ACCOUNT_HANDLERS } from './account'
 import type { HandlerContext } from '../dispatch'
 import type { RuntimeClient } from '../runtime-client'
@@ -657,5 +658,50 @@ describe('account CLI handlers', () => {
     await ACCOUNT_HANDLERS['account list']({ ...context('claude'), flags: new Map() })
 
     expect(callMock).toHaveBeenCalledWith('accounts.list', { refreshUsage: false })
+  })
+})
+
+describe('resolveManagedAccountId', () => {
+  const accounts = [
+    { id: 'f2c1ff77-3932-403b-9cf9-3a40f04d1a64', email: 'visigoth@gmail.com' },
+    { id: '0b9a1c22-1111-2222-3333-444455556666', email: 'work@example.com' }
+  ]
+
+  // Email first because that is what `account list` prints; the id is what a script has.
+  it('resolves by email, case-insensitively', () => {
+    expect(resolveManagedAccountId(accounts, 'visigoth@gmail.com')).toBe(accounts[0]!.id)
+    expect(resolveManagedAccountId(accounts, 'VISIGOTH@Gmail.com')).toBe(accounts[0]!.id)
+  })
+
+  it('resolves by id', () => {
+    expect(resolveManagedAccountId(accounts, accounts[1]!.id)).toBe(accounts[1]!.id)
+  })
+
+  it('trims what the shell may have left attached', () => {
+    expect(resolveManagedAccountId(accounts, '  work@example.com ')).toBe(accounts[1]!.id)
+  })
+
+  // Guessing between two accounts would select one the user did not name.
+  it('refuses an ambiguous email rather than picking one', () => {
+    const duplicated = [
+      { id: 'a', email: 'same@example.com' },
+      { id: 'b', email: 'same@example.com' }
+    ]
+    expect(() => resolveManagedAccountId(duplicated, 'same@example.com')).toThrow(/matches 2/)
+  })
+
+  it('names the known accounts when nothing matches', () => {
+    expect(() => resolveManagedAccountId(accounts, 'nobody@example.com')).toThrow(
+      /visigoth@gmail.com/
+    )
+  })
+
+  // The state this command exists to escape: a host where nothing has been registered yet.
+  it('points at `account add` when there are no accounts at all', () => {
+    expect(() => resolveManagedAccountId([], 'anyone@example.com')).toThrow(/orca account add/)
+  })
+
+  it('rejects an empty selector', () => {
+    expect(() => resolveManagedAccountId(accounts, '   ')).toThrow(/Missing an account/)
   })
 })
