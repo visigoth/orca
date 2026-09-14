@@ -1,6 +1,7 @@
 /* oxlint-disable max-lines */
 // Why: single authority for all relay lifecycle state per SSH target (previously scattered across module Maps/Sets with duplicated paths).
 
+import { readFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import type { BrowserWindow } from 'electron'
 import { deployAndLaunchRelay } from './ssh-relay-deploy'
@@ -1252,10 +1253,21 @@ export class SshRelaySession {
           await upload.close()
         }
       },
-      resolveManagedCredentialsPath: resolveActiveManagedCredentialsPath
+      resolveManagedCredentialsPath: resolveActiveManagedCredentialsPath,
+      readLocalCredentials: (localPath) => readFile(localPath, 'utf8')
     })
     if (outcome === 'written') {
       console.log(`[ssh-claude-auth] ${this.targetId}: managed Claude account applied`)
+    }
+    // Why this one is surfaced and the other outcomes are not: the rest are ordinary states (no
+    // account configured, the remote already has one, a platform we do not push to). A stale
+    // account is a thing the user has and expects to work, and the agent will open logged out
+    // without saying why.
+    if (outcome === 'stale-managed-account') {
+      console.warn(
+        `[ssh-claude-auth] ${this.targetId}: the managed Claude account is expired; ` +
+          'the agent will open logged out until it is re-authenticated'
+      )
     }
   }
 

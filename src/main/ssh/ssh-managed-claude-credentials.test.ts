@@ -20,6 +20,11 @@ function makeDeps(
       command.startsWith('printf') ? '/home/node/.claude' : 'STALE'
     ),
     uploadFile: vi.fn(async () => {}),
+    readLocalCredentials: vi.fn(async () =>
+      JSON.stringify({
+        claudeAiOauth: { accessToken: 'live-token', expiresAt: Date.now() + 60 * 60 * 1000 }
+      })
+    ),
     resolveManagedCredentialsPath: vi.fn(async () => '/managed/acct/auth/.credentials.json'),
     log: () => {},
     ...overrides
@@ -126,5 +131,86 @@ describe('remote probe', () => {
 describe('shellQuote', () => {
   it('survives a quote in a path', () => {
     expect(shellQuote("/home/o'brien/.claude")).toBe(`'/home/o'\\''brien/.claude'`)
+  })
+})
+
+describe('a stale managed account is refused, not sent', () => {
+  // The 2026-09-14 failure, reproduced: a token that expired two days earlier satisfied every
+  // other check -- account registered, file present, shape correct -- and was materialised and
+  // reported applied. The agent then opened logged out while the log claimed success.
+  it('refuses a source token that has already expired', async () => {
+    const uploadFile = vi.fn(async () => {})
+    const outcome = await materializeManagedClaudeCredentials(
+      makeDeps({
+        uploadFile,
+        readLocalCredentials: async () =>
+          JSON.stringify({
+            claudeAiOauth: {
+              accessToken: 'expired-token',
+              refreshToken: 'r',
+              expiresAt: Date.now() - 2 * 24 * 60 * 60 * 1000
+            }
+          })
+      })
+    )
+
+    expect(outcome).toBe('stale-managed-account')
+    expect(uploadFile).not.toHaveBeenCalled()
+  })
+
+  // What the far side wrote back after failing to rotate the expired token: correct shape, no
+  // tokens. Sending that on would be indistinguishable from sending nothing.
+  it('refuses a blob whose tokens are blank', async () => {
+    const uploadFile = vi.fn(async () => {})
+    const outcome = await materializeManagedClaudeCredentials(
+      makeDeps({
+        uploadFile,
+        readLocalCredentials: async () =>
+          JSON.stringify({
+            claudeAiOauth: { accessToken: '', refreshToken: '', expiresAt: Date.now() + 3600000 }
+          })
+      })
+    )
+
+    expect(outcome).toBe('stale-managed-account')
+    expect(uploadFile).not.toHaveBeenCalled()
+  })
+
+  it('refuses rather than throwing when the source cannot be read', async () => {
+    const uploadFile = vi.fn(async () => {})
+    const outcome = await materializeManagedClaudeCredentials(
+      makeDeps({
+        uploadFile,
+        readLocalCredentials: async () => {
+          throw new Error('ENOENT')
+        }
+      })
+    )
+
+    expect(outcome).toBe('stale-managed-account')
+    expect(uploadFile).not.toHaveBeenCalled()
+  })
+
+  // Expiring within the 5-minute skew is treated as unusable: the agent on the far side cannot
+  // refresh for us, so a token about to die is not worth the trip.
+  it('refuses a token inside the refresh buffer', async () => {
+    const outcome = await materializeManagedClaudeCredentials(
+      makeDeps({
+        readLocalCredentials: async () =>
+          JSON.stringify({
+            claudeAiOauth: { accessToken: 'almost-dead', expiresAt: Date.now() + 60000 }
+          })
+      })
+    )
+
+    expect(outcome).toBe('stale-managed-account')
+  })
+
+  it('still sends a live token', async () => {
+    const uploadFile = vi.fn(async () => {})
+    const outcome = await materializeManagedClaudeCredentials(makeDeps({ uploadFile }))
+
+    expect(outcome).toBe('written')
+    expect(uploadFile).toHaveBeenCalled()
   })
 })

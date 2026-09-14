@@ -1,5 +1,6 @@
 import type { RemoteHostPlatform } from './ssh-remote-platform'
 import { isWindowsRemoteHost } from './ssh-remote-platform'
+import { isOauthCredentialUsable } from '../claude-accounts/oauth-credential-freshness'
 
 /**
  * Give an SSH workspace the managed Claude account the runtime already holds.
@@ -18,6 +19,12 @@ export type ManagedClaudeCredentialsOutcome =
   | 'written'
   | 'remote-already-authenticated'
   | 'no-managed-account'
+  /**
+   * An account is registered, but its stored token is expired or unusable. Distinct from
+   * `no-managed-account` because the fix is different: this one needs re-authenticating, not
+   * adding.
+   */
+  | 'stale-managed-account'
   | 'unsupported-remote'
   | 'unavailable'
 
@@ -34,6 +41,12 @@ export type ManagedClaudeCredentialsDeps = {
   uploadFile: (localPath: string, remotePath: string) => Promise<void>
   /** Absolute path of the active managed account's `.credentials.json`, or null when there is none. */
   resolveManagedCredentialsPath: () => Promise<string | null>
+  /**
+   * Read that file's contents, so the source can be checked for expiry before it is sent. Injected
+   * rather than read inline to keep this function free of filesystem access, which is what lets
+   * every branch below be exercised without touching a disk.
+   */
+  readLocalCredentials: (localPath: string) => Promise<string>
   log?: (message: string) => void
 }
 
@@ -85,6 +98,31 @@ export async function materializeManagedClaudeCredentials(
   const localCredentialsPath = await deps.resolveManagedCredentialsPath()
   if (!localCredentialsPath) {
     return 'no-managed-account'
+  }
+
+  // Check the SOURCE before pushing it, not just the destination.
+  //
+  // The remote probe below asks whether the FAR SIDE already has something usable. It says nothing
+  // about what we are about to send, and an expired token satisfies every other check here: the
+  // account is registered, the file exists, the shape is right. Pushing it anyway produced the
+  // worst available outcome -- the agent came up logged out while the log said the account had
+  // been applied, so the one place anybody would look for the answer disagreed with reality.
+  //
+  // Observed 2026-09-14: a token that expired two days earlier was materialised and reported
+  // applied; the CLI on the far side then tried to rotate it, failed, and wrote back an empty
+  // credentials file.
+  //
+  // Refreshing here would be better than refusing, and is deliberately NOT done: the refresh token
+  // is single-use, and ClaudeRuntimeAuthService rotates it inside a serialized mutation queue for
+  // that reason. Racing it from the SSH path would burn the token. Refusing loudly is the honest
+  // half; the refresh belongs with the account service.
+  const localCredentials = await deps.readLocalCredentials(localCredentialsPath).catch(() => null)
+  if (!localCredentials || !isOauthCredentialUsable(localCredentials)) {
+    log(
+      '[ssh-claude-auth] the managed Claude account token is expired or unusable; not sending it. ' +
+        'Re-authenticate the account, then reconnect this workspace.'
+    )
+    return 'stale-managed-account'
   }
 
   try {
