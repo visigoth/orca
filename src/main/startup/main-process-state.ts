@@ -60,6 +60,9 @@ export const mainProcessState = {
   codexSessionMigration: null as ReturnType<typeof createCodexSessionMigrationScheduler> | null,
   claudeAccounts: null as ClaudeAccountService | null,
   claudeRuntimeAuth: null as ClaudeRuntimeAuthService | null,
+  // Stops the managed-token refresh schedule. Held here rather than module-scope so a restarted
+  // account-services init replaces its own timer instead of leaving two ticking.
+  stopManagedTokenRefresh: null as (() => void) | null,
   runtime: null as OrcaRuntimeService | null,
   rateLimits: null as RateLimitService | null,
   runtimeRpc: null as OrcaRuntimeRpcServer | null,

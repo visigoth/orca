@@ -1,4 +1,5 @@
 import { setManagedClaudeCredentialsSource } from '../ssh/ssh-managed-claude-credentials-source'
+import { startManagedTokenRefreshSchedule } from '../claude-accounts/managed-token-refresh-schedule'
 import { resolveActiveManagedClaudeCredentialsPath } from '../claude-accounts/active-managed-credentials-path'
 import { app } from 'electron'
 import { RateLimitService } from '../rate-limits/service'
@@ -73,14 +74,41 @@ export function initializeMainProcessAccountServices(): void {
   // is spawned on the far side, so without this a host holding a perfectly good account still opens
   // every remote workspace logged out. The SSH layer reads the account through this seam.
   setManagedClaudeCredentialsSource({
-    resolveActiveManagedCredentialsPath: async () =>
-      resolveActiveManagedClaudeCredentialsPath({
+    resolveActiveManagedCredentialsPath: async () => {
+      // Refresh BEFORE handing the path over, not after discovering the token was dead.
+      //
+      // The SSH layer uploads this file as-is to a machine that cannot refresh it for us, so a
+      // token that expires between now and the agent's first request is a workspace that opens
+      // logged out. The host path already refreshes at exactly this moment -- runtime-auth-sync
+      // rotates and persists before materializing, "else runtime gets a stale token that fails
+      // invalid_grant" -- and this is the same moment for the remote one.
+      //
+      // Through syncForCurrentSelection rather than the refresh directly, because that is what
+      // serializes: the refresh token is single use, and two concurrent rotations invalidate a
+      // copy. Failure is not fatal here -- the materializer checks the credential itself and
+      // refuses a stale one, so the worst case is the refusal it would have made anyway.
+      try {
+        await state.claudeRuntimeAuth?.syncForCurrentSelection()
+      } catch (error) {
+        console.warn('[claude-token-refresh] refresh before ssh materialization failed', error)
+      }
+      return resolveActiveManagedClaudeCredentialsPath({
         activeAccountId: store.getSettings().activeClaudeManagedAccountId,
-        // Why the list too: selecting an account is a Settings-UI action with no CLI equivalent, so
-        // on a headless host `orca account add` leaves the selection null forever. One registered
-        // account and no selection is not ambiguous.
+        // Why the list too: selecting an account had no CLI equivalent until `orca account
+        // select`, so a headless host that only ever ran `orca account add` still has none.
         registeredAccountIds: (state.claudeAccounts?.listAccounts().accounts ?? []).map((a) => a.id)
       })
+    }
+  })
+  // Why a schedule at all: every other caller of syncForCurrentSelection is an event a headless
+  // host never sees -- a local agent launch, a selection change, an auth-preserving restart. With
+  // none of them, the refresh path is never entered and the token expires beside a valid refresh
+  // token. Ticks are cheap: the refresh only fires inside the expiry buffer.
+  state.stopManagedTokenRefresh?.()
+  state.stopManagedTokenRefresh = startManagedTokenRefreshSchedule({
+    sync: async () => {
+      await state.claudeRuntimeAuth?.syncForCurrentSelection()
+    }
   })
   state.rateLimits.setCodexHomePathResolver((target) =>
     state.codexRuntimeHome!.prepareForRateLimitFetch(target)
