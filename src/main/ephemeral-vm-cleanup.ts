@@ -31,6 +31,30 @@ export async function cleanupEphemeralVmRuntimeById(args: {
   if (!runtime.repoId) {
     throw new Error(`Ephemeral VM runtime has no repo id: ${runtimeId}`)
   }
+  // Read the target before any teardown runs: releasing it clears `sshTargetId` from the record,
+  // and that id is the only thing naming the execution host whose rows must go with it.
+  const targetBefore = runtime.sshTargetId
+  const releaseSshTarget = async (
+    record: EphemeralVmRuntimeRecord
+  ): Promise<EphemeralVmRuntimeRecord> => {
+    const released = await removeEphemeralVmRuntimeSshTarget({
+      userDataPath,
+      runtime: record,
+      removeTarget: removeRuntimeOwnedSshTarget
+    })
+    // The workspace's session partition is keyed by `ssh:<targetId>`, so this is the last moment
+    // anything can find it — afterwards it is residue the UI still renders as an openable
+    // workspace. Only on a CONFIRMED release: a teardown that kept its target keeps its partition
+    // too, so a retry still finds the workspace intact.
+    if (targetBefore && !released.sshTargetId) {
+      try {
+        store.forgetRuntimeHostWorkspaceSessions([targetBefore])
+      } catch (error) {
+        console.error('[ephemeral-vm] orphaned host session purge failed:', error)
+      }
+    }
+    return released
+  }
   let result
   if (runtime.cleanupStatus === 'succeeded') {
     result = { ok: true as const, runtime, skipped: false }
@@ -47,11 +71,7 @@ export async function cleanupEphemeralVmRuntimeById(args: {
         cleanupLastAttemptAt: Date.now(),
         cleanupLastError: error instanceof Error ? error.message : String(error)
       })
-      return removeEphemeralVmRuntimeSshTarget({
-        userDataPath,
-        runtime: failed,
-        removeTarget: removeRuntimeOwnedSshTarget
-      })
+      return releaseSshTarget(failed)
     }
     result = await cleanupEphemeralVmRuntime({
       userDataPath,
@@ -71,9 +91,5 @@ export async function cleanupEphemeralVmRuntimeById(args: {
   if (!result.ok) {
     return result.runtime
   }
-  return removeEphemeralVmRuntimeSshTarget({
-    userDataPath,
-    runtime: result.runtime,
-    removeTarget: removeRuntimeOwnedSshTarget
-  })
+  return releaseSshTarget(result.runtime)
 }

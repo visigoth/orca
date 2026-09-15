@@ -1250,7 +1250,7 @@ export class SshRelaySession {
         try {
           await upload.uploadFile(localPath, remotePath)
         } finally {
-          await upload.close()
+          upload.close()
         }
       },
       resolveManagedCredentialsPath: resolveActiveManagedCredentialsPath,

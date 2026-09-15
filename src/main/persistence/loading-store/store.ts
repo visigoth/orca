@@ -67,6 +67,10 @@ export class Store {
     // Load is the only place an orphaned repo id can be swept: every removal path needs the repo to
     // still be registered, so rows outlive their owner without one (#17776).
     const sweptRepoIds = this.domains.repos.sweepDeregisteredRepoResidue()
+    // Same shape one level up: a per-workspace environment's session partition is keyed by a host
+    // that ceases to exist with the environment, and by the time teardown finishes it no longer
+    // knows which key was its own. Runtime-owned SSH hosts only — see runtime-host-session-residue.
+    const sweptHostIds = this.domains.sshProfiles.sweepUnreachableRuntimeHostSessions()
     for (const entry of normalized.migrationUnsupportedEntries) {
       setMigrationUnsupportedPty(entry)
     }
@@ -85,7 +89,8 @@ export class Store {
       normalized.changed ||
       this.runtime.loadNeedsSave ||
       adaptedProjectGroups ||
-      sweptRepoIds.length > 0
+      sweptRepoIds.length > 0 ||
+      sweptHostIds.length > 0
     ) {
       scheduleSave(this.domains.scheduling)
     }

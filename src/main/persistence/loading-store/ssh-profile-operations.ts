@@ -22,6 +22,12 @@ import {
   reassignSshTargetId as reassignSshTargetIdOperation,
   type SshTargetReassignmentOperations
 } from '../leasing-ssh-ptys/ssh-target-reassignment'
+import {
+  collectUnreachableRuntimeHostSessionIds,
+  forgetHostWorkspaceSessions,
+  runtimeHostIdsForSshTargets
+} from '../leasing-ssh-ptys/runtime-host-session-residue'
+import type { ExecutionHostId } from '../../../shared/execution-host'
 import { allocateSshTargetGeneration as allocateSshTargetGenerationOperation } from '../scheduling-automations/automation-owner-projection'
 
 import type { StoreRuntimeState } from './store-runtime-state'
@@ -122,6 +128,42 @@ export class SshProfileOperations {
 
   removeRemovedSshTargetTombstone(oldTargetId: string): void {
     removeRemovedSshTargetTombstoneOperation(getSshTargetStateOperations(this), oldTargetId)
+  }
+
+  /**
+   * Drop the workspace-session partitions owned by destroyed per-workspace environments.
+   *
+   * Called with CONFIRMED-destroyed target ids, alongside the project purge, so that a teardown
+   * that failed keeps its partition for the next attempt to find.
+   */
+  forgetRuntimeHostWorkspaceSessions(sshTargetIds: readonly string[]): ExecutionHostId[] {
+    const context = this[sshProfileOperationsContext]
+    const result = forgetHostWorkspaceSessions(
+      context.runtime.state.workspaceSessionsByHostId,
+      runtimeHostIdsForSshTargets(sshTargetIds)
+    )
+    if (result.removed.length === 0) {
+      return []
+    }
+    context.runtime.state.workspaceSessionsByHostId = result.sessions
+    scheduleSave(context.scheduling)
+    return result.removed
+  }
+
+  /**
+   * Load-time backstop for partitions whose runtime-owned target is already gone.
+   *
+   * Like `sweepDeregisteredRepoResidue`, this can only run at load: the cleanup that would have
+   * reclaimed these no longer knows which host key was its own by the time it finishes.
+   */
+  sweepUnreachableRuntimeHostSessions(): ExecutionHostId[] {
+    const context = this[sshProfileOperationsContext]
+    const result = forgetHostWorkspaceSessions(
+      context.runtime.state.workspaceSessionsByHostId,
+      collectUnreachableRuntimeHostSessionIds(context.runtime.state)
+    )
+    context.runtime.state.workspaceSessionsByHostId = result.sessions
+    return result.removed
   }
 
   reassignSshTargetId(oldTargetId: string, newTargetId: string): string[] {

@@ -139,7 +139,8 @@ export class ElectronEphemeralVmHost implements EphemeralVmHost {
   async cleanupRuntime(runtimeId: string): Promise<EphemeralVmCleanupOutcome> {
     const userDataPath = this.userDataPath()
     // Read the target BEFORE cleanup: afterwards the record no longer names it, and the project
-    // rows pinned to it could not be found.
+    // rows pinned to it could not be found. (The session partition keyed by the same host is
+    // reclaimed inside cleanupEphemeralVmRuntimeById, which every teardown path goes through.)
     const targetBefore = listEphemeralVmRuntimes(userDataPath).find(
       (entry) => entry.id === runtimeId
     )?.sshTargetId

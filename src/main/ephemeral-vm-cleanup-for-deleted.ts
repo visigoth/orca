@@ -134,5 +134,7 @@ export async function cleanupEphemeralVmRuntimesForDeleted(args: {
   } catch (error) {
     console.error('[ephemeral-vm] orphaned project purge failed:', error)
   }
+  // The session partition keyed by each destroyed host is NOT purged here: cleanupEphemeralVmRuntimeById
+  // does it at the moment it releases the target, which is the only path every caller shares.
   return summary
 }
